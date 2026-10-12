@@ -16,10 +16,11 @@ An analog-style synthesizer for iPhone with a step sequencer, drum machine, pres
 - LFO for pitch or filter cutoff
 - Amp and filter envelopes
 - FX: chorus, delay, reverb, drive and pump
-- 16-step sequencer with banks A–H, key mode (transpose, arpeggiator) and hold
-- Drum machine with five synthesised drums, sound variants and banks A–H
+- 16-step sequencer with banks A–H, key mode (transpose, arpeggiator), hold and a Randomize button
+- Drum machine with ten synthesised drums (kick, snare, clap, hats, toms, rim, cowbell, ride), sound variants, banks A–H and Randomize for patterns and sounds
 - Presets with categories, favorites and search; your own presets can include the drums
-- MIDI controller support (USB and Bluetooth) with MIDI learn
+- MIDI controller support (USB, Bluetooth and Wi-Fi network MIDI) with MIDI learn
+- Sync to external MIDI clock (tempo, start and stop), e.g. from Ableton Live
 - Full-width keyboard in landscape
 
 ## Requirements
