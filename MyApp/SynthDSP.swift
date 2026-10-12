@@ -9,7 +9,8 @@ import Synchronization
 /// A message from the UI to the audio thread.
 nonisolated struct SynthEvent {
     enum Kind: UInt8 { case parameter, noteOn, noteOff, allNotesOff, stepNote, drumStep, play, stop, keyDown, keyUp, drumPreview, midi,
-                       stagedDrumStep, commitDrumSteps, stagedStepNote, commitPattern }
+                       stagedDrumStep, commitDrumSteps, stagedStepNote, commitPattern,
+                       clockMode }
     var kind: Kind
     var index: Int32  // parameter raw value, MIDI note, step number, drum step slot, or a `MIDIControl`
     var value: Float  // parameter value, velocity, step note (-1 = rest) or drum step on (1) / off (0)
@@ -40,6 +41,18 @@ nonisolated final class SynthMonitor: @unchecked Sendable {
     /// 1 while a track has been switched on and waits for the next bar to start.
     let sequencerArmed = Atomic<Int>(0)
     let drumsArmed = Atomic<Int>(0)
+    /// MIDI clock: 0 = internal, 1 = waiting for clock, 2 = receiving, 3 = clock lost.
+    let clockStatus = Atomic<Int>(0)
+    /// Detected external tempo in hundredths of a BPM (0 when none).
+    let clockTempo = Atomic<Int>(0)
+    /// External clock mode: 1 while the transport runs or waits for the clock to start it.
+    let clockTransport = Atomic<Int>(0)
+#if DEBUG
+    /// Host time (seconds, as bits) when the latest step was scheduled to sound, and its step
+    /// number since the grid's origin (for the synthetic clock's sync log).
+    let lastStepHostTime = Atomic<UInt64>(0)
+    let lastStepIndex = Atomic<Int>(-1)
+#endif
 }
 
 /// Lock-free single-producer (UI) / single-consumer (audio) ring buffer.
@@ -351,6 +364,8 @@ nonisolated final class SynthDSP {
     private let queue: SynthEventQueue
     /// Second lock-free queue whose only producer is the MIDI input thread.
     private let midiQueue: SynthEventQueue?
+    /// Timestamped MIDI clock, Start, Continue and Stop from the CoreMIDI receive thread.
+    private let clockQueue: ClockEventQueue?
 
     // MIDI performance controls (targets, and values gliding towards them).
     private var bendTarget: Float = 0
@@ -446,11 +461,41 @@ nonisolated final class SynthDSP {
     /// Bank the drums play; a new selection waits for the end of the bar while playing.
     private var playingDrumBank = 0
 
-    init(sampleRate: Double, queue: SynthEventQueue, midiQueue: SynthEventQueue? = nil, monitor: SynthMonitor,
-         initialValues: [Float], initialSteps: [Int], initialDrumSteps: [Bool]) {
+    // External MIDI clock. When it is on, the same step code runs, but the moment of every
+    // step comes from the filtered clock instead of the tempo knob.
+    private let externalClock = ExternalClock()
+    private let hostTicksToSeconds: Double
+    /// The step grid follows the external clock.
+    private var clockExternal = false
+    /// Selected clock source; a change while playing applies at the next step boundary.
+    private var clockExternalRequested = false
+    /// User latency compensation (s), added to every step time.
+    private var clockOffset = 0.0
+    /// External tick index of step 0 of the running grid.
+    private var gridOrigin: Int64 = 0
+    private var hasGridOrigin = false
+    /// What the transport waits for at the next accepted tick.
+    private enum ClockWait { case none, start, resume, localStart, align }
+    private var clockWait = ClockWait.none
+    /// Ticks since the grid origin when the transport stopped (for Continue).
+    private var stoppedTicks: Int64 = 0
+    private var hasStoppedPosition = false
+    /// Paused because the clock went quiet without a Stop.
+    private var clockLost = false
+    /// Place the next step exactly on the grid (after Start, Continue or a mode switch).
+    private var clockHardSync = false
+    /// While waiting for a tick, the next step is pushed this far away.
+    private static var waitingSamples: Double { 1e9 }
+
+    init(sampleRate: Double, queue: SynthEventQueue, midiQueue: SynthEventQueue? = nil, clockQueue: ClockEventQueue? = nil,
+         monitor: SynthMonitor, initialValues: [Float], initialSteps: [Int], initialDrumSteps: [Bool]) {
         self.sampleRate = Float(sampleRate)
         self.queue = queue
         self.midiQueue = midiQueue
+        self.clockQueue = clockQueue
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        hostTicksToSeconds = Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
         self.monitor = monitor
 
         let count = SynthParam.count
@@ -540,15 +585,31 @@ nonisolated final class SynthDSP {
 
     /// Fills `left` and `right` with `frameCount` samples. Blocks are cut exactly at sequencer
     /// step and gate boundaries, so the rhythm is sample-accurate and never drifts.
-    func render(frameCount: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>) {
+    /// `hostTime` is the host time of the buffer's first sample (0 if unknown).
+    func render(frameCount: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, hostTime: UInt64 = 0) {
         drainEvents()
+        let bufferTime = Double(hostTime != 0 ? hostTime : mach_absolute_time()) * hostTicksToSeconds
+        if clockExternal || clockExternalRequested {
+            followExternalClock(frameCount: frameCount, bufferTime: bufferTime)
+        } else if let clockQueue {
+            while clockQueue.pop() != nil {} // internal clock: incoming clock is ignored
+        }
         var frame = 0
         while frame < frameCount {
             if isPlaying {
                 if samplesToNoteOff <= 0 {
                     releaseSequencerNote()
                 }
+                if samplesToNextStep <= 0, clockExternalRequested != clockExternal {
+                    switchClockSource() // a source change takes effect on a step boundary
+                }
                 while samplesToNextStep <= 0 {
+#if DEBUG
+                    if clockExternal {
+                        monitor.lastStepHostTime.store((bufferTime + Double(frame) / Double(sampleRate)).bitPattern, ordering: .relaxed)
+                        monitor.lastStepIndex.store(tick, ordering: .relaxed)
+                    }
+#endif
                     advanceSequencer()
                 }
             }
@@ -845,7 +906,9 @@ nonisolated final class SynthDSP {
     /// Length of step `index` in samples. Swing lengthens even steps and shortens odd ones,
     /// which pushes every second sixteenth later.
     private func stepDuration(_ tick: Int) -> Double {
-        let sixteenth = 60 / Double(max(param(.seqTempo), 20)) / 4 * Double(sampleRate)
+        let sixteenth = clockExternal && externalClock.hasPeriod
+            ? 6 * externalClock.period * Double(sampleRate)
+            : 60 / Double(max(param(.seqTempo), 20)) / 4 * Double(sampleRate)
         let swing = Double(param(.seqSwing))
         return tick % 2 == 0 ? sixteenth * (1 + swing) : sixteenth * (1 - swing)
     }
@@ -1045,6 +1108,159 @@ nonisolated final class SynthDSP {
         applyDrumBank()
     }
 
+    // MARK: - External MIDI clock
+
+    /// Reads the clock events of this buffer, runs the transport commands, notices a lost
+    /// clock, and steers the next step onto the external grid.
+    private func followExternalClock(frameCount: Int, bufferTime: Double) {
+        if let clockQueue {
+            while let event = clockQueue.pop() {
+                let time = Double(event.hostTime) * hostTicksToSeconds
+                switch event.kind {
+                case .tick:
+                    guard externalClock.tick(at: time, source: event.source) > 0 else { continue }
+                    clockLost = false // receiving again; a paused transport waits for Continue or Play
+                    if clockExternal { resolveClockWait() }
+                case .start:
+                    guard clockExternal, externalClock.follows(event.source, at: time) else { continue }
+                    if isPlaying { stopForExternalClock(keepPosition: false) }
+                    hasStoppedPosition = false
+                    clockWait = .start
+                case .continue:
+                    guard clockExternal, externalClock.follows(event.source, at: time) else { continue }
+                    if !isPlaying { clockWait = hasStoppedPosition ? .resume : .start }
+                case .stop:
+                    guard clockExternal, externalClock.follows(event.source, at: time) else { continue }
+                    clockWait = .none
+                    if isPlaying { stopForExternalClock(keepPosition: true) }
+                }
+            }
+        }
+
+        let receiving = externalClock.hasPeriod && bufferTime - externalClock.lastTickTime < 1
+        if clockExternal, isPlaying, !receiving {
+            // Ticks stopped for over a second without a Stop: pause and keep the position.
+            clockLost = true
+            stopForExternalClock(keepPosition: true)
+        }
+        monitor.clockStatus.store(!clockExternal ? 0 : (receiving ? 2 : (clockLost ? 3 : 1)), ordering: .relaxed)
+        monitor.clockTempo.store(receiving ? Int((externalClock.tempo * 100).rounded()) : 0, ordering: .relaxed)
+        monitor.clockTransport.store(isPlaying || clockWait != .none ? 1 : 0, ordering: .relaxed)
+
+        guard clockExternal, isPlaying, clockWait == .none, hasGridOrigin, externalClock.hasPeriod else { return }
+        let rate = Double(sampleRate)
+        let stepSeconds = 6 * externalClock.period
+        var desired = (externalStepTime(tick) - bufferTime) * rate
+        if desired < -0.5 * stepSeconds * rate {
+            // Behind the grid by over half a step (a tempo jump or missing ticks): skip to the
+            // next step boundary instead of rushing through the missed steps.
+            let behind = Int((bufferTime - externalStepTime(tick)) / stepSeconds) + 1
+            skipSteps(behind)
+            desired = (externalStepTime(tick) - bufferTime) * rate
+        }
+        let error = desired - samplesToNextStep
+        if clockHardSync || abs(error) > stepSeconds * rate {
+            samplesToNextStep = max(desired, 0)
+            clockHardSync = false
+        } else {
+            // Small corrections are spread out: at most 5% of the buffer per buffer.
+            let slew = 0.05 * Double(frameCount)
+            samplesToNextStep += min(max(error, -slew), slew)
+        }
+    }
+
+    /// When step `step` of the running grid should sound (host seconds), swing included.
+    private func externalStepTime(_ step: Int) -> Double {
+        var time = externalClock.time(ofTick: gridOrigin + 6 * Int64(step)) + clockOffset
+        if step % 2 == 1 { time += Double(param(.seqSwing)) * 6 * externalClock.period }
+        return time
+    }
+
+    /// Runs what was waiting for the clock, on the tick just accepted.
+    private func resolveClockWait() {
+        let index = externalClock.lastIndex
+        switch clockWait {
+        case .none:
+            return
+        case .start:
+            gridOrigin = index
+            hasGridOrigin = true
+            startTransport()
+        case .resume:
+            gridOrigin = index - stoppedTicks
+            hasGridOrigin = true
+            resumeTransport()
+        case .localStart:
+            // Play keeps the phase of a grid the clock already set up: start on its next step.
+            if hasGridOrigin, (index - gridOrigin) % 6 != 0 { return }
+            gridOrigin = index
+            hasGridOrigin = true
+            startTransport()
+        case .align:
+            // Switched to the external clock while playing: the position carries on, and the
+            // next step lands on the next step boundary of a grid the clock set up before.
+            if hasGridOrigin, (index - gridOrigin) % 6 != 0 { return }
+            gridOrigin = index - 6 * Int64(tick)
+            hasGridOrigin = true
+        }
+        clockWait = .none
+        clockHardSync = true
+    }
+
+    /// Changes between the internal and external clock (at a step boundary while playing).
+    private func switchClockSource() {
+        clockExternal = clockExternalRequested
+        clockLost = false
+        if clockExternal {
+            if isPlaying {
+                clockWait = .align // keep the position, continue on the next incoming tick
+                samplesToNextStep = Self.waitingSamples
+            }
+        } else {
+            clockWait = .none
+            if samplesToNextStep >= Self.waitingSamples { samplesToNextStep = 0 }
+            monitor.clockStatus.store(0, ordering: .relaxed)
+            monitor.clockTempo.store(0, ordering: .relaxed)
+            monitor.clockTransport.store(0, ordering: .relaxed)
+        }
+    }
+
+    /// Stops sequencer and drums at once (external Stop, local Stop or lost clock); nothing
+    /// keeps sounding. With `keepPosition`, Continue picks up where it stopped.
+    private func stopForExternalClock(keepPosition: Bool) {
+        if keepPosition, hasGridOrigin {
+            stoppedTicks = max(0, externalClock.lastIndex - gridOrigin + 1)
+            hasStoppedPosition = true
+        } else {
+            hasStoppedPosition = false
+        }
+        stopTransport()
+        silenceSequencer()
+        drums.fadeOutAll()
+    }
+
+    /// Like `startTransport`, but from where the transport stopped.
+    private func resumeTransport() {
+        releaseSequencerNote()
+        isPlaying = true
+        sequencerActive = param(.seqEnabled) >= 0.5
+        drumsActive = param(.drumsEnabled) >= 0.5
+        sequencerArmed = false
+        drumsArmed = false
+        monitor.sequencerArmed.store(0, ordering: .relaxed)
+        monitor.drumsArmed.store(0, ordering: .relaxed)
+        samplesToNextStep = 0
+    }
+
+    /// Moves the position on by `count` steps without playing them.
+    private func skipSteps(_ count: Int) {
+        guard count > 0 else { return }
+        for _ in 0..<count {
+            tick += 1
+            nextStep = nextStep + 1 >= sequenceLength ? 0 : nextStep + 1
+        }
+    }
+
     // MARK: - Key mode
 
     private var keyMode: Int { Int(param(.keyMode)) }
@@ -1065,14 +1281,24 @@ nonisolated final class SynthDSP {
         case KeyMode.transpose.rawValue:
             // Every press sets the transposition and restarts the pattern from step 1.
             transposeKey = note
-            startTransport()
+            if clockExternal {
+                if !isPlaying { clockWait = .localStart } // starts in step with the external clock
+            } else {
+                startTransport()
+            }
         case KeyMode.arp.rawValue:
             // A fresh press (no keys held) starts a new chord, replacing a held one.
             if wasIdle {
                 for i in 0..<128 { chord[i] = 0 }
             }
             chord[n] = 1
-            if wasIdle { startTransport() }
+            if wasIdle {
+                if clockExternal {
+                    if !isPlaying { clockWait = .localStart }
+                } else {
+                    startTransport()
+                }
+            }
         default:
             noteOn(note, velocity: velocity)
         }
@@ -1278,9 +1504,24 @@ nonisolated final class SynthDSP {
                     applyDrumBank()
                 }
             case .play:
-                startTransport()
+                if clockExternal {
+                    if !isPlaying { clockWait = .localStart } // starts on the next step of the clock
+                } else {
+                    startTransport()
+                }
             case .stop:
-                stopTransport()
+                if clockExternal {
+                    clockWait = .none
+                    if isPlaying { stopForExternalClock(keepPosition: false) }
+                } else {
+                    stopTransport()
+                }
+            case .clockMode:
+                clockExternalRequested = event.index == 1
+                clockOffset = Double(event.value) / 1000
+                if !isPlaying, clockExternalRequested != clockExternal {
+                    switchClockSource()
+                }
             case .keyDown:
                 keyDown(event.index, velocity: event.value)
             case .keyUp:

@@ -6,8 +6,19 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		F62EF846307CDC3300C4B964 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000100000000;
+			remoteInfo = MyApp;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* MyApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = MyApp.app; path = "Ember One.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		F62EF83F307CDC3300C4B964 /* EmberOneTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EmberOneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +27,20 @@
 			path = MyApp;
 			sourceTree = "<group>";
 		};
+		F62EF840307CDC3300C4B964 /* EmberOneTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = EmberOneTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		000000000000000130000000 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		F62EF83C307CDC3300C4B964 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -31,6 +52,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000010 /* MyApp */,
+				F62EF840307CDC3300C4B964 /* EmberOneTests */,
 				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -39,6 +61,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000120 /* MyApp.app */,
+				F62EF83F307CDC3300C4B964 /* EmberOneTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -64,6 +87,27 @@
 			productReference = 000000000000000000000120 /* MyApp.app */;
 			productType = "com.apple.product-type.application";
 		};
+		F62EF83E307CDC3300C4B964 /* EmberOneTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F62EF843307CDC3300C4B964 /* Build configuration list for PBXNativeTarget "EmberOneTests" */;
+			buildPhases = (
+				F62EF83B307CDC3300C4B964 /* Sources */,
+				F62EF83C307CDC3300C4B964 /* Frameworks */,
+				F62EF83D307CDC3300C4B964 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F62EF847307CDC3300C4B964 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				F62EF840307CDC3300C4B964 /* EmberOneTests */,
+			);
+			name = EmberOneTests;
+			productName = EmberOneTests;
+			productReference = F62EF83F307CDC3300C4B964 /* EmberOneTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -71,11 +115,14 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2630;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					000000000000000100000000 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					F62EF83E307CDC3300C4B964 = {
+						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
@@ -94,12 +141,18 @@
 			projectRoot = "";
 			targets = (
 				000000000000000100000000 /* MyApp */,
+				F62EF83E307CDC3300C4B964 /* EmberOneTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		000000000000000140000000 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		F62EF83D307CDC3300C4B964 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -112,7 +165,20 @@
 			files = (
 			);
 		};
+		F62EF83B307CDC3300C4B964 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F62EF847307CDC3300C4B964 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000100000000 /* MyApp */;
+			targetProxy = F62EF846307CDC3300C4B964 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		000000000000000011000000 /* Debug configuration for PBXProject "MyApp" */ = {
@@ -331,6 +397,52 @@
 			};
 			name = Release;
 		};
+		F62EF844307CDC3300C4B964 /* Debug configuration for PBXNativeTarget "EmberOneTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lovro.EmberOneTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Ember One.app/Ember One";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		F62EF845307CDC3300C4B964 /* Release configuration for PBXNativeTarget "EmberOneTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lovro.EmberOneTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Ember One.app/Ember One";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -347,6 +459,14 @@
 			buildConfigurations = (
 				000000000000000111000000 /* Debug configuration for PBXNativeTarget "MyApp" */,
 				000000000000000112000000 /* Release configuration for PBXNativeTarget "MyApp" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		F62EF843307CDC3300C4B964 /* Build configuration list for PBXNativeTarget "EmberOneTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F62EF844307CDC3300C4B964 /* Debug configuration for PBXNativeTarget "EmberOneTests" */,
+				F62EF845307CDC3300C4B964 /* Release configuration for PBXNativeTarget "EmberOneTests" */,
 			);
 			defaultConfigurationName = Release;
 		};

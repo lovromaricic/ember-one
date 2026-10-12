@@ -37,6 +37,8 @@ final class SynthEngine {
     @ObservationIgnored private let queue = SynthEventQueue()
     /// Events from MIDI controllers; its only producer is the MIDI input queue.
     @ObservationIgnored let midiQueue = SynthEventQueue()
+    /// Timestamped MIDI clock messages; its only producer is the CoreMIDI receive thread.
+    @ObservationIgnored let clockQueue = ClockEventQueue()
     @ObservationIgnored private var dsp: SynthDSP?
     @ObservationIgnored private var configurationObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var drumSaveTask: Task<Void, Never>?
@@ -189,6 +191,62 @@ final class SynthEngine {
         patch.sequencer.banks[bank] = padded
     }
 
+    // MARK: - External MIDI clock
+
+    enum ClockStatus: Equatable { case off, waiting, receiving, lost }
+
+    /// Follows an external MIDI clock (set from the MIDI settings).
+    private(set) var clockExternal = false
+    private(set) var clockStatus = ClockStatus.off
+    /// Detected external tempo (BPM), 0 when no clock is received.
+    private(set) var externalTempo: Double = 0
+    @ObservationIgnored private var clockWatcher: Task<Void, Never>?
+
+    /// Chooses the clock source and latency offset; a change while playing takes effect on
+    /// the next step boundary.
+    func setClock(external: Bool, offsetMs: Int) {
+        queue.push(SynthEvent(kind: .clockMode, index: external ? 1 : 0, value: Float(offsetMs)))
+        guard external != clockExternal else { return }
+        clockExternal = external
+        clockWatcher?.cancel()
+        clockWatcher = nil
+        if external {
+            // The external clock starts and stops the transport: mirror it for the UI.
+            clockWatcher = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    self?.readClockMonitor()
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+        } else {
+            clockStatus = .off
+            externalTempo = 0
+        }
+    }
+
+#if DEBUG
+    /// Latest step scheduled on the external clock: its number and host time (s).
+    var debugLastStep: (Int, Double) {
+        (monitor.lastStepIndex.load(ordering: .relaxed), Double(bitPattern: monitor.lastStepHostTime.load(ordering: .relaxed)))
+    }
+#endif
+
+    private func readClockMonitor() {
+        let status: ClockStatus = switch monitor.clockStatus.load(ordering: .relaxed) {
+        case 2: .receiving
+        case 3: .lost
+        case 0: clockStatus == .off ? .off : .waiting // the audio thread hasn't switched yet
+        default: .waiting
+        }
+        if status != clockStatus { clockStatus = status }
+        let tempo = Double(monitor.clockTempo.load(ordering: .relaxed)) / 100
+        // Shown to 0.1 BPM: change only when the rounded value really moves, so it never flickers.
+        if tempo == 0 || abs(tempo - externalTempo) >= 0.08 { externalTempo = tempo }
+        // Until the audio thread has switched over (status 0), the transport is still internal.
+        let running = monitor.clockTransport.load(ordering: .relaxed) != 0
+        if status != .off, monitor.clockStatus.load(ordering: .relaxed) != 0, running != isPlaying { isPlaying = running }
+    }
+
     // MARK: - Pattern presets
 
     /// Loads a preset that carries a whole groove (sequencer banks, tempo and drums). The sound
@@ -221,6 +279,27 @@ final class SynthEngine {
         }
         patch = newPatch // sends the sound settings and the bank choice
         if let kit { drums = kit }
+    }
+
+    // MARK: - Whole-bank replacement (Randomize and its Undo)
+
+    /// Replaces all 16 steps of one sequencer bank in one go: staged on the audio thread and
+    /// swapped in at the start of the next bar while playing (at once when stopped).
+    func replaceSequencerBank(_ bank: Int, with steps: [Int?]) {
+        guard patch.sequencer.banks.indices.contains(bank) else { return }
+        var newPatch = patch
+        var padded = Array(steps.prefix(SynthPatch.stepCount))
+        padded += Array(repeating: nil, count: SynthPatch.stepCount - padded.count)
+        newPatch.sequencer.banks[bank] = padded
+        loadPattern(newPatch, drums: nil)
+    }
+
+    /// Replaces one drum bank's pattern in one go, the same way (sounds and settings unchanged).
+    func replaceDrumBank(_ bank: Int, with pattern: [[Bool]]) {
+        guard drums.banks.indices.contains(bank) else { return }
+        var kit = drums
+        kit.banks[bank] = pattern
+        loadDrums(kit)
     }
 
     // MARK: - Drum banks
@@ -320,7 +399,7 @@ final class SynthEngine {
             sentValues = SynthParam.allCases.map { audioValue($0, patch: patch, drums: drums) }
             sentSteps = Array(patch.sequencer.banks.joined())
             sentDrumBanks = drums.banks
-            let dsp = SynthDSP(sampleRate: sampleRate, queue: queue, midiQueue: midiQueue, monitor: monitor,
+            let dsp = SynthDSP(sampleRate: sampleRate, queue: queue, midiQueue: midiQueue, clockQueue: clockQueue, monitor: monitor,
                                initialValues: sentValues, initialSteps: sentSteps.map { $0 ?? -1 },
                                initialDrumSteps: sentDrumBanks.flatMap { $0.flatMap { $0 } })
             guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else { return }
@@ -346,12 +425,14 @@ final class SynthEngine {
     /// Built outside the main actor so the closure isn't tied to the main thread; it only
     /// calls into `SynthDSP`, which does no allocation, locking or I/O.
     private nonisolated static func makeRenderBlock(dsp: SynthDSP) -> AVAudioSourceNodeRenderBlock {
-        { _, _, frameCount, audioBufferList in
+        { _, timestamp, frameCount, audioBufferList in
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
             guard let left = buffers.first?.mData?.assumingMemoryBound(to: Float.self) else { return noErr }
             // Deinterleaved stereo: the second buffer is the right channel (mono falls back to left).
             let right = buffers.count > 1 ? buffers[1].mData?.assumingMemoryBound(to: Float.self) ?? left : left
-            dsp.render(frameCount: Int(frameCount), left: left, right: right)
+            // Host time of the buffer, so external MIDI clock steps land on exact samples.
+            let hostTime = timestamp.pointee.mFlags.contains(.hostTimeValid) ? timestamp.pointee.mHostTime : 0
+            dsp.render(frameCount: Int(frameCount), left: left, right: right, hostTime: hostTime)
             return noErr
         }
     }

@@ -117,6 +117,10 @@ struct SequencerTab: View {
     @Binding var selectedStep: Int?
 
     @State private var undo = UndoOffer()
+    /// "Pattern randomized · Undo", shown away from the dice.
+    @State private var diceUndo = UndoOffer()
+    /// Turns of the dice icon (one per tap).
+    @State private var diceTurns = 0.0
 
     var body: some View {
         SynthSection(title: nil) {
@@ -156,9 +160,17 @@ struct SequencerTab: View {
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(Retro.cream.opacity(0.55))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Below the banks, so the dice stays free for another roll.
+                .overlay(alignment: .trailing) { UndoBanner(offer: $diceUndo) }
+                .zIndex(1)
             keyModeControls
             HStack(spacing: 0) {
+                // The external clock sets the tempo while it is received.
+                let external = synth.clockExternal && synth.clockStatus == .receiving
                 PatchKnob(synth: synth, param: .seqTempo, label: "TEMPO")
+                    .allowsHitTesting(!external)
+                    .opacity(external ? 0.4 : 1)
+                    .accessibilityHint(external ? Text("Set by the external MIDI clock") : Text(""))
                 PatchKnob(synth: synth, param: .seqSwing, label: "SWING")
                 PatchKnob(synth: synth, param: .seqLength, label: "STEPS")
             }
@@ -229,6 +241,11 @@ struct SequencerTab: View {
         let bank = synth.patch.sequencer.activeBank
         let letter = Self.bankLetter(bank)
         return HStack(spacing: 2) {
+            ToolButton(symbol: "dice", label: "Randomize", accessibility: Text("Randomize pattern"),
+                       tint: Retro.accent, rotation: diceTurns * 360) {
+                randomizeBank(bank)
+            }
+            .sensoryFeedback(.impact(weight: .light), trigger: diceTurns)
             ToolButton(symbol: "doc.on.doc", label: "Copy", accessibility: Text("Copy bank \(letter)")) {
                 synth.bankClipboard = synth.bankSteps(bank)
             }
@@ -240,6 +257,16 @@ struct SequencerTab: View {
                 clearBank(bank)
             }
         }
+    }
+
+    /// New melody in minor pentatonic for the selected bank (swaps in on the next bar while playing).
+    private func randomizeBank(_ bank: Int) {
+        let before = synth.bankSteps(bank)
+        var rng = SystemRandomNumberGenerator()
+        let root = PatternRandomizer.root(for: before, category: synth.patch.category)
+        synth.replaceSequencerBank(bank, with: PatternRandomizer.melody(root: root, using: &rng))
+        withAnimation(.easeInOut(duration: 0.3)) { diceTurns += 1 }
+        diceUndo.offer(Text("Pattern randomized"), seconds: 5) { [synth] in synth.replaceSequencerBank(bank, with: before) }
     }
 
     /// Clears a bank at once and offers a short Undo.
@@ -425,14 +452,25 @@ struct TransportBar: View {
         HStack(spacing: 6) {
             transportButton("play.fill", label: "Play", isLit: synth.isPlaying) { synth.play() }
             transportButton("stop.fill", label: "Stop", isLit: false) { synth.stop() }
+            // With an external clock coming in, its tempo is shown (muted, EXT) instead.
+            let external = synth.clockExternal && synth.clockStatus == .receiving
             VStack(spacing: 0) {
-                Text(verbatim: "\(Int(synth.patch.sequencer.tempo.rounded()))")
+                Text(verbatim: "\(Int((external ? synth.externalTempo : Double(synth.patch.sequencer.tempo)).rounded()))")
                     .font(Retro.label(16))
-                    .foregroundStyle(Retro.accent)
+                    .foregroundStyle(external ? Retro.cream.opacity(0.55) : Retro.accent)
                     .contentTransition(.numericText())
-                Text("BPM")
-                    .font(Retro.label(8))
-                    .foregroundStyle(Retro.cream.opacity(0.6))
+                if external {
+                    Text(verbatim: "EXT")
+                        .font(Retro.label(7))
+                        .foregroundStyle(Retro.accent)
+                        .padding(.horizontal, 3)
+                        .overlay { RoundedRectangle(cornerRadius: 2).stroke(Retro.accent, lineWidth: 1) }
+                        .accessibilityLabel("External clock")
+                } else {
+                    Text("BPM")
+                        .font(Retro.label(8))
+                        .foregroundStyle(Retro.cream.opacity(0.6))
+                }
             }
             .frame(width: 44)
             .accessibilityElement(children: .combine)
@@ -521,6 +559,8 @@ struct DrumsTab: View {
     @State private var followsPlayhead = true
     @State private var editing: DrumKind?
     @State private var undo = UndoOffer()
+    /// Turns of the dice icon (one per tap).
+    @State private var diceTurns = 0.0
     @Environment(\.knobSize) private var knobSize
 
     var body: some View {
@@ -553,9 +593,20 @@ struct DrumsTab: View {
                                 .foregroundStyle(isSelected ? Color.black : Retro.cream)
                         }
                         .frame(width: 96)
-                        bankTools
                     }
                     .overlay(alignment: .trailing) { UndoBanner(offer: $undo) }
+
+                    bankTools
+                    bankRow(blink: blink)
+                        .opacity(synth.drums.enabled ? 1 : 0.45)
+
+                    // Dimmed while the track is off; still editable.
+                    VStack(spacing: 4) {
+                        ForEach(DrumKind.allCases, id: \.self) { drum in
+                            row(drum, page: shownPage, playing: playing)
+                        }
+                    }
+                    .opacity(synth.drums.enabled ? 1 : 0.45)
 
                     HStack(spacing: 0) {
                         PatchKnob(synth: synth, param: .drumVolume, label: "VOLUME", size: knobSize - 4)
@@ -564,15 +615,6 @@ struct DrumsTab: View {
                         PatchKnob(synth: synth, param: .drumComp, label: "COMP", size: knobSize - 4)
                         PatchKnob(synth: synth, param: .drumDrive, label: "DRIVE", size: knobSize - 4)
                     }
-
-                    // Dimmed while the track is off; still editable.
-                    VStack(spacing: 4) {
-                        ForEach(DrumKind.allCases, id: \.self) { drum in
-                            row(drum, page: shownPage, playing: playing)
-                        }
-                        bankRow(blink: blink)
-                    }
-                    .opacity(synth.drums.enabled ? 1 : 0.45)
                 }
             }
         }
@@ -581,22 +623,38 @@ struct DrumsTab: View {
         }
     }
 
-    /// Copy, Paste and Clear for the selected drum bank.
+    /// Randomize, Copy, Paste and Clear for the selected drum bank. Four equal buttons with the
+    /// bank row's spacing, so each one lines up with two bank buttons below it.
     private var bankTools: some View {
         let bank = synth.drums.activeBank
         let letter = SequencerTab.bankLetter(bank)
-        return HStack(spacing: 2) {
-            ToolButton(symbol: "doc.on.doc", label: "Copy", accessibility: Text("Copy drum bank \(letter)")) {
+        return HStack(spacing: 4) {
+            ToolButton(symbol: "dice", label: "Randomize", accessibility: Text("Randomize pattern"),
+                       tint: Retro.accent, width: nil, rotation: diceTurns * 360) {
+                randomizeBank(bank)
+            }
+            .sensoryFeedback(.impact(weight: .light), trigger: diceTurns)
+            ToolButton(symbol: "doc.on.doc", label: "Copy", accessibility: Text("Copy drum bank \(letter)"), width: nil) {
                 synth.drumBankClipboard = synth.drumBankPattern(bank)
             }
-            ToolButton(symbol: "doc.on.clipboard", label: "Paste", accessibility: Text("Paste into drum bank \(letter)")) {
+            ToolButton(symbol: "doc.on.clipboard", label: "Paste", accessibility: Text("Paste into drum bank \(letter)"), width: nil) {
                 if let clip = synth.drumBankClipboard { synth.setDrumBankPattern(bank, clip) }
             }
             .disabled(synth.drumBankClipboard == nil)
-            ToolButton(symbol: "trash", label: "Clear", accessibility: Text("Clear drum bank \(letter)")) {
+            ToolButton(symbol: "trash", label: "Clear", accessibility: Text("Clear drum bank \(letter)"), width: nil) {
                 clearBank(bank)
             }
         }
+        .padding(.vertical, -7) // drawn 30 pt high; the 44 pt touch areas overlap the gaps
+    }
+
+    /// New beat for the selected drum bank (swaps in on the next bar while playing).
+    private func randomizeBank(_ bank: Int) {
+        let before = synth.drumBankPattern(bank)
+        var rng = SystemRandomNumberGenerator()
+        synth.replaceDrumBank(bank, with: PatternRandomizer.beat(using: &rng))
+        withAnimation(.easeInOut(duration: 0.3)) { diceTurns += 1 }
+        undo.offer(Text("Pattern randomized"), seconds: 5) { [synth] in synth.replaceDrumBank(bank, with: before) }
     }
 
     /// Clears every drum's steps in a bank at once (sounds stay) and offers a short Undo.
@@ -870,6 +928,12 @@ struct ToolButton: View {
     let symbol: String
     let label: LocalizedStringKey
     let accessibility: Text
+    /// Icon colour (cream by default).
+    var tint: Color = Retro.cream
+    /// Drawn width; nil stretches to share a row equally.
+    var width: CGFloat? = 34
+    /// Icon rotation in degrees (the dice spins when tapped).
+    var rotation: Double = 0
     let action: () -> Void
     @Environment(\.isEnabled) private var isEnabled
 
@@ -877,11 +941,13 @@ struct ToolButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Retro.cream.opacity(isEnabled ? 1 : 0.3))
-                .frame(width: 34, height: 30)
+                .foregroundStyle(tint.opacity(isEnabled ? 1 : 0.3))
+                .rotationEffect(.degrees(rotation))
+                .frame(maxWidth: width ?? .infinity)
+                .frame(width: width, height: 30)
                 .background(Retro.knobBottom.opacity(isEnabled ? 1 : 0.5), in: RoundedRectangle(cornerRadius: Retro.buttonRadius))
                 .overlay { RoundedRectangle(cornerRadius: Retro.buttonRadius).stroke(.black.opacity(0.6), lineWidth: Retro.buttonBorder) }
-                .frame(width: 44, height: 44)
+                .frame(minWidth: width == nil ? 0 : 44, maxWidth: width == nil ? .infinity : nil, minHeight: 44, maxHeight: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -895,10 +961,13 @@ struct UndoOffer {
     var message: Text?
     var restore: (() -> Void)?
     var id = 0
+    /// How long the banner stays.
+    var seconds: Double = 4
 
-    mutating func offer(_ message: Text, restore: @escaping () -> Void) {
+    mutating func offer(_ message: Text, seconds: Double = 4, restore: @escaping () -> Void) {
         self.message = message
         self.restore = restore
+        self.seconds = seconds
         id += 1
     }
 
@@ -908,7 +977,7 @@ struct UndoOffer {
     }
 }
 
-/// "Bank A cleared · Undo" banner that disappears after four seconds.
+/// "Bank A cleared · Undo" banner that disappears after a few seconds.
 struct UndoBanner: View {
     @Binding var offer: UndoOffer
 
@@ -940,7 +1009,7 @@ struct UndoBanner: View {
             .overlay { RoundedRectangle(cornerRadius: Retro.buttonRadius + 2).stroke(Retro.accent.opacity(0.7), lineWidth: Retro.buttonBorder) }
             .transition(.opacity)
             .task(id: offer.id) {
-                try? await Task.sleep(for: .seconds(4))
+                try? await Task.sleep(for: .seconds(offer.seconds))
                 if !Task.isCancelled { withAnimation { offer.dismiss() } }
             }
         }

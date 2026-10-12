@@ -120,6 +120,9 @@ struct Knob: View {
     @State private var isTurning = false
     @State private var learnTimer: Task<Void, Never>?
     @State private var learnStartedByThisTouch = false
+    /// Counts double-tap resets (for the haptic).
+    @State private var resets = 0
+    @State private var editsValue = false
     @Environment(MIDIManager.self) private var midi: MIDIManager?
 
     /// Knob travel: 270°, from 7 o'clock to 5 o'clock.
@@ -211,7 +214,9 @@ struct Knob: View {
                         isTurning = false
                     }
             )
-            .onTapGesture(count: 2) { value = audioValue(param, patch: SynthPatch(), drums: DrumKit()) }
+            // Alongside the drag, which only turns the knob after 4 pt of movement.
+            .simultaneousGesture(TapGesture(count: 2).onEnded { resetToDefault() })
+            .sensoryFeedback(.impact(weight: .light), trigger: resets)
 
             Text(Self.format(value, unit: param.unit))
                 .font(.system(size: 9, design: .monospaced))
@@ -219,15 +224,46 @@ struct Knob: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .frame(height: 12)
+                // 44 pt tall tap area (mostly below, away from the knob) without changing the layout.
+                .padding(.top, 6)
+                .padding(.bottom, 26)
+                .contentShape(Rectangle())
+                .onTapGesture { editsValue = true }
+                .padding(.top, -6)
+                .padding(.bottom, -26)
+        }
+        .sheet(isPresented: $editsValue) {
+            KnobValueEditor(
+                param: param,
+                range: range ?? param.range,
+                current: value,
+                set: { newValue in withAnimation(.easeOut(duration: 0.2)) { value = newValue } },
+                reset: resetToDefault
+            )
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(Self.format(value, unit: param.unit))
+        .accessibilityAction(named: Text("Reset \(param.displayName) to default")) { resetToDefault() }
+        .accessibilityAction(named: Text("Edit \(param.displayName) value")) { editsValue = true }
         .accessibilityAction(named: Text("Link to MIDI controller")) { midi?.beginLearn(param) }
         .accessibilityAdjustableAction { direction in
             let delta: Float = direction == .increment ? 0.05 : -0.05
             value = param.value(fromNormalized: param.normalized(value, in: range) + delta, in: range)
         }
+    }
+
+    /// The value a fresh Init patch (or a fresh drum kit) has, within this knob's travel.
+    private var defaultValue: Float {
+        let base = audioValue(param, patch: SynthPatch(), drums: DrumKit())
+        guard let range else { return base }
+        return min(max(base, range.lowerBound), range.upperBound)
+    }
+
+    private func resetToDefault() {
+        learnTimer?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) { value = defaultValue }
+        resets += 1
     }
 
     /// After half a second of a still touch, MIDI learn starts for this knob.

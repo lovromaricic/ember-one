@@ -32,6 +32,28 @@ nonisolated struct MIDISettings: Codable, Equatable {
     /// Pitch bend range in semitones, up and down.
     var bendRange = 2
     var modWheel = ModWheelTarget.lfoAmount
+    /// Follow an external MIDI clock (tempo, Start, Continue, Stop) instead of the tempo knob.
+    var clockExternal = false
+    /// Shifts the external clock's phase (latency compensation), -50...50 ms.
+    var clockOffsetMs = 0
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case channel, velocity, bendRange, modWheel, clockExternal, clockOffsetMs
+    }
+
+    /// Settings saved by older versions (without the clock fields) still load.
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = MIDISettings()
+        channel = c.lenient(.channel, default: d.channel)
+        velocity = c.lenient(.velocity, default: d.velocity)
+        bendRange = c.lenient(.bendRange, default: d.bendRange)
+        modWheel = c.lenient(.modWheel, default: d.modWheel)
+        clockExternal = c.lenient(.clockExternal, default: d.clockExternal)
+        clockOffsetMs = min(max(c.lenient(.clockOffsetMs, default: d.clockOffsetMs), -50), 50)
+    }
 }
 
 /// A controller knob (device + CC number) linked to a synth parameter by MIDI learn.
@@ -51,6 +73,8 @@ nonisolated final class MIDIInputSettings: @unchecked Sendable {
     let bendRange = Atomic<Int>(2)
     /// Last time (ms since start) an activity ping was sent to the UI, to throttle them.
     let lastPing = Atomic<Int>(0)
+    /// Set while the DEBUG test clock runs: clock messages from real devices are ignored.
+    let ignoresDeviceClock = Atomic<Bool>(false)
 }
 
 /// Connects to every MIDI source, turns incoming messages into synth events, and handles
@@ -80,6 +104,8 @@ final class MIDIManager {
     private(set) var setupError: String?
 
     var isConnected: Bool { !devices.isEmpty }
+    /// The synth engine, for showing the external clock's status.
+    var clockEngine: SynthEngine? { engine }
 
     @ObservationIgnored private weak var engine: SynthEngine?
     @ObservationIgnored private var client = MIDIClientRef()
@@ -91,6 +117,12 @@ final class MIDIManager {
     @ObservationIgnored private let inputQueue = DispatchQueue(label: "MIDI input", qos: .userInteractive)
 
     static let simulatedDeviceID: Int32 = -1
+    /// Source ID of the DEBUG test clock.
+    nonisolated static let syntheticClockID: Int32 = -2
+#if DEBUG
+    /// Test clock for checking MIDI clock sync without hardware (launch argument only).
+    @ObservationIgnored private(set) var syntheticClock: SyntheticMIDIClock?
+#endif
 
     init() {
         let defaults = UserDefaults.standard
@@ -105,6 +137,7 @@ final class MIDIManager {
         self.engine = engine
         storeInputSettings()
         sendModWheelTarget()
+        engine.setClock(external: settings.clockExternal, offsetMs: settings.clockOffsetMs)
 
         let notify: MIDINotifyBlock = Self.makeNotifyBlock { [weak self] in self?.refreshSources() }
         var status = MIDIClientCreateWithBlock("Ember One" as CFString, &client, notify)
@@ -112,7 +145,7 @@ final class MIDIManager {
             setupError = String(localized: "MIDI is not available (\(status)).")
             return
         }
-        let receive = Self.makeReceiveBlock(queue: inputQueue) { [weak self] words, deviceID in
+        let receive = Self.makeReceiveBlock(queue: inputQueue, clockQueue: engine.clockQueue, settings: inputSettings) { [weak self] words, deviceID in
             self?.handleWords(words, deviceID: deviceID)
         }
         status = MIDIInputPortCreateWithProtocol(client, "Input" as CFString, ._1_0, &inputPort, receive)
@@ -121,6 +154,16 @@ final class MIDIManager {
             return
         }
         refreshSources()
+#if DEBUG
+        if SyntheticMIDIClock.isRequested {
+            inputSettings.ignoresDeviceClock.store(true, ordering: .relaxed)
+            let refCon = UnsafeMutableRawPointer(bitPattern: Self.refCon(for: Self.syntheticClockID))
+            let clock = SyntheticMIDIClock(engine: engine) { list in receive(list, refCon) }
+            syntheticClock = clock
+            clock.startLogging()
+            if SyntheticMIDIClock.runsScenario { clock.runScenario(midi: self) }
+        }
+#endif
     }
 
     /// Connects to new sources and notices removed ones. Called at start and on every
@@ -193,7 +236,7 @@ final class MIDIManager {
                 Task { @MainActor [weak self] in self?.handleControlChange(Int(data1), value: Int(data2), deviceID: deviceID) }
             }
         default:
-            break // aftertouch, program change, clock, start/stop: ignored for now
+            break // aftertouch and program change are ignored; clock is read in the receive block
         }
     }
 
@@ -252,6 +295,7 @@ final class MIDIManager {
     private func settingsChanged() {
         storeInputSettings()
         sendModWheelTarget()
+        engine?.setClock(external: settings.clockExternal, offsetMs: settings.clockOffsetMs)
         if let data = try? JSONEncoder().encode(settings) {
             UserDefaults.standard.set(data, forKey: "midiSettings")
         }
@@ -323,10 +367,13 @@ final class MIDIManager {
     }
 
     /// Copies the packet words (only valid during the callback) and handles them on `queue`.
-    private nonisolated static func makeReceiveBlock(queue: DispatchQueue,
+    /// MIDI clock, Start, Continue and Stop go straight from here (CoreMIDI's receive thread,
+    /// the clock queue's only producer) to the audio thread, with the packet's host timestamp.
+    private nonisolated static func makeReceiveBlock(queue: DispatchQueue, clockQueue: ClockEventQueue, settings: MIDIInputSettings,
                                                      handler: @escaping @Sendable ([UInt32], Int32) -> Void) -> MIDIReceiveBlock {
         { eventList, refCon in
             let deviceID = Self.deviceID(fromRefCon: refCon)
+            let readsClock = deviceID == syntheticClockID || !settings.ignoresDeviceClock.load(ordering: .relaxed)
             var words: [UInt32] = []
             var packet = UnsafeRawPointer(eventList).advanced(by: MemoryLayout<MIDIEventList>.offset(of: \.packet)!)
                 .assumingMemoryBound(to: MIDIEventPacket.self)
@@ -334,6 +381,18 @@ final class MIDIManager {
                 let count = Int(packet.pointee.wordCount)
                 let wordsStart = UnsafeRawPointer(packet).advanced(by: MemoryLayout<MIDIEventPacket>.offset(of: \.words)!)
                     .assumingMemoryBound(to: UInt32.self)
+                // A zero timestamp means "now".
+                let stamp = packet.pointee.timeStamp != 0 ? packet.pointee.timeStamp : mach_absolute_time()
+                for i in 0..<min(count, 64) where wordsStart[i] >> 28 == 0x1 { // system messages
+                    let kind: ClockEvent.Kind? = switch UInt8((wordsStart[i] >> 16) & 0xFF) {
+                    case 0xF8: .tick
+                    case 0xFA: .start
+                    case 0xFB: .continue
+                    case 0xFC: .stop
+                    default: nil // song position and the rest are ignored
+                    }
+                    if let kind, readsClock { clockQueue.push(ClockEvent(kind: kind, source: deviceID, hostTime: stamp)) }
+                }
                 words.append(contentsOf: UnsafeBufferPointer(start: wordsStart, count: min(count, 64)))
                 packet = UnsafePointer(MIDIEventPacketNext(packet))
             }

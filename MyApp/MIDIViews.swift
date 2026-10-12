@@ -139,6 +139,9 @@ struct MIDISheet: View {
                         sectionHeader("Input")
                         card { inputRows }
 
+                        sectionHeader("Clock")
+                        card { clockRows }
+
                         sectionHeader("Learned controls")
                         card { learnedRows }
                         footnote("Links are kept for the app, not for a preset.")
@@ -158,9 +161,27 @@ struct MIDISheet: View {
                                     .disabled(!midi.simulatesController)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .rowPadding()
+#if DEBUG
+                                if let clock = midi.syntheticClock {
+                                    hairline
+                                    // Test clock (launch argument -SyntheticMIDIClock YES).
+                                    HStack(spacing: 14) {
+                                        Button("Start") { clock.start() }
+                                        Button("Stop") { clock.stop() }
+                                        Button("Continue") { clock.resume() }
+                                        Button("120") { clock.setTempo(120) }
+                                        Button("128") { clock.setTempo(128) }
+                                        Button("Mute 3 s") { clock.silence(3) }
+                                    }
+                                    .font(.system(size: hintSize, weight: .medium))
+                                    .foregroundStyle(Retro.accent)
+                                    .buttonStyle(.plain)
+                                    .rowPadding()
+                                }
+#endif
                             }
                         }
-                        footnote("MIDI clock, start and stop are ignored for now.")
+                        footnote("MIDI clock follows the source selected under Clock.")
                             .onLongPressGesture(minimumDuration: 1.5) { withAnimation { showsDeveloper.toggle() } }
                     }
                     .padding(.horizontal, 16)
@@ -381,6 +402,66 @@ struct MIDISheet: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityLabel(label)
+    }
+
+    // MARK: - Clock
+
+    @ViewBuilder private var clockRows: some View {
+        choiceRow("Clock source", value: midi.settings.clockExternal ? String(localized: "External") : String(localized: "Internal")) {
+            Picker("Clock source", selection: $midi.settings.clockExternal) {
+                Text("Internal").tag(false)
+                Text("External").tag(true)
+            }
+        }
+        if midi.settings.clockExternal, let engine = midi.clockEngine {
+            hairline
+            HStack(spacing: 12) {
+                let receiving = engine.clockStatus == .receiving
+                statusDot(on: receiving)
+                Group {
+                    switch engine.clockStatus {
+                    case .receiving: Text("Receiving clock: \(String(format: "%.1f", engine.externalTempo)) BPM")
+                    case .lost: Text("Clock lost")
+                    default: Text("Waiting for clock…")
+                    }
+                }
+                .font(.system(size: titleSize, weight: .medium))
+                .foregroundStyle(receiving ? Retro.cream : PresetSheetStyle.muted)
+                .monospacedDigit()
+                Spacer(minLength: 0)
+            }
+            .rowPadding()
+            .accessibilityElement(children: .combine)
+        }
+        hairline
+        offsetRow
+    }
+
+    /// Clock offset with − and + in one pill (1 ms steps, -50...50 ms).
+    private var offsetRow: some View {
+        let offset = midi.settings.clockOffsetMs
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Clock offset")
+                    .font(.system(size: titleSize, weight: .medium))
+                    .foregroundStyle(Retro.cream)
+                Text(verbatim: offset > 0 ? "+\(offset) ms" : "\(offset) ms")
+                    .font(.system(size: hintSize))
+                    .foregroundStyle(PresetSheetStyle.muted)
+                    .monospacedDigit()
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 0) {
+                stepButton("minus", label: "Decrease clock offset", enabled: offset > -50) { midi.settings.clockOffsetMs -= 1 }
+                Rectangle()
+                    .fill(PresetSheetStyle.hairline)
+                    .frame(width: 1, height: 18)
+                stepButton("plus", label: "Increase clock offset", enabled: offset < 50) { midi.settings.clockOffsetMs += 1 }
+            }
+            .background(PresetSheetStyle.pill, in: RoundedRectangle(cornerRadius: 10).inset(by: 6))
+        }
+        .rowPadding(vertical: 2)
+        .accessibilityElement(children: .contain)
     }
 
     // MARK: - Learned controls
