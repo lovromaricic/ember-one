@@ -6,16 +6,20 @@ nonisolated enum PatternRandomizer {
     /// Minor pentatonic, in semitones above the root.
     static let scale = [0, 3, 5, 7, 10]
 
-    /// Root note: the most frequent note in the bank, or A in an octave that suits the preset.
+    /// Root note: the key of the bank (its most frequent note) in the preset's home register,
+    /// or A there if the bank is empty. The register is fixed, so pressing Randomize again and
+    /// again never creeps up or down an octave at a time.
     static func root(for steps: [Int?], category: PresetCategory) -> Int {
+        let home = category == .bass ? 33 : 57 // A1 for bass, A3 for everything else
         let notes = steps.compactMap { $0 }
-        if !notes.isEmpty {
-            var counts: [Int: Int] = [:]
-            for note in notes { counts[note, default: 0] += 1 }
-            // Most frequent; on a tie the lowest, which is usually the tonic of a riff.
-            return counts.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }!.key
-        }
-        return category == .bass ? 33 : 57 // A1 for bass, A3 for everything else
+        guard !notes.isEmpty else { return home }
+        var counts: [Int: Int] = [:]
+        for note in notes { counts[note % 12, default: 0] += 1 }
+        // Most frequent pitch class; on a tie the lowest.
+        let key = counts.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }!.key
+        // That pitch within a tritone of home (home - 6 ... home + 5).
+        let lowest = home - 6
+        return lowest + ((key - lowest) % 12 + 12) % 12
     }
 
     /// 16 steps of minor pentatonic around `root`: step 1 is the root, 9–12 steps play,
@@ -50,7 +54,9 @@ nonisolated enum PatternRandomizer {
                 note = pool.randomElement(using: &rng)!
             }
             // About 15% jump an octave (up for low roots, else either way), staying in MIDI range.
-            if step != 0, Double.random(in: 0..<1, using: &rng) < 0.15 {
+            // Only from the root's own octave: a repeated note that already jumped doesn't jump
+            // again, so the line never stacks octave on octave.
+            if step != 0, (root...root + 12).contains(note), Double.random(in: 0..<1, using: &rng) < 0.15 {
                 let up = root < 48 || Bool.random(using: &rng)
                 let jumped = note + (up ? 12 : -12)
                 if (0...127).contains(jumped) { note = jumped }
