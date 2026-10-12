@@ -2,6 +2,13 @@
 
 An analog-style synthesizer for iPhone with a step sequencer, drum machine, presets and MIDI support.
 
+## Screenshots
+
+| | | |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/main.png" width="250" alt="Main screen"> | <img src="docs/screenshots/presets.png" width="250" alt="Presets"> | <img src="docs/screenshots/midi.png" width="250" alt="MIDI"> |
+| Main screen | Presets | MIDI |
+
 ## Features
 
 - Two oscillators (sine, saw, square, triangle) with level, octave and detune
