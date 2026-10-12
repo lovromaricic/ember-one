@@ -506,6 +506,10 @@ extension DrumKind {
         case .rim: "Rim"
         case .cowbell: "Cowbell"
         case .ride: "Ride"
+        case .crash: "Crash"
+        case .shaker: "Shaker"
+        case .clave: "Clave"
+        case .fx: "FX"
         }
     }
 
@@ -557,6 +561,26 @@ extension DrumKind {
         case (.ride, 3): "Bell"
         case (.ride, 4): "Wash"
         case (.ride, _): "Classic"
+        case (.crash, 1): "Bright"
+        case (.crash, 2): "Dark"
+        case (.crash, 3): "Short"
+        case (.crash, 4): "Wash"
+        case (.crash, _): "Classic"
+        case (.shaker, 1): "Soft"
+        case (.shaker, 2): "Tight"
+        case (.shaker, 3): "Long"
+        case (.shaker, 4): "Bright"
+        case (.shaker, _): "Classic"
+        case (.clave, 1): "High"
+        case (.clave, 2): "Low"
+        case (.clave, 3): "Wood"
+        case (.clave, 4): "Short"
+        case (.clave, _): "Classic"
+        case (.fx, 1): "Laser"
+        case (.fx, 2): "Drop"
+        case (.fx, 3): "Zap"
+        case (.fx, 4): "Rise"
+        case (.fx, _): "Classic"
         }
     }
 
@@ -573,6 +597,10 @@ extension DrumKind {
         case .rim: "RIM"
         case .cowbell: "COWBELL"
         case .ride: "RIDE"
+        case .crash: "CRASH"
+        case .shaker: "SHAKER"
+        case .clave: "CLAVE"
+        case .fx: "FX"
         }
     }
 }

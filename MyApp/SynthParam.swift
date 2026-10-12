@@ -39,10 +39,14 @@ nonisolated enum DrumKind: Int, CaseIterable, Codable {
     case kick, snare, clap, closedHat, openHat
     // Added later; kits and presets saved with five lanes still load (new lanes start empty).
     case tomLo, tomHi, rim, cowbell, ride
+    // Added after that; kits saved with five or ten lanes still load.
+    case crash, shaker, clave, fx
 
-    static var count: Int { 10 }
+    static var count: Int { 14 }
     /// The original five drums (their parameters sit in the first drum block).
     static var originalCount: Int { 5 }
+    /// Drums before Crash (Tom Lo...Ride have the second block, Crash...FX the third).
+    static var secondCount: Int { 10 }
 
     /// Full decay knob range (s) of the later drums, covering all their variants.
     var decayKnobRange: ClosedRange<Float> {
@@ -52,8 +56,17 @@ nonisolated enum DrumKind: Int, CaseIterable, Codable {
         case .rim: 0.01...0.3
         case .cowbell: 0.05...1.0
         case .ride: 0.2...3.0
+        case .crash: 0.1...3.0
+        case .shaker: 0.02...0.4
+        case .clave: 0.01...0.25
+        case .fx: 0.02...2.0
         default: 0.01...1.5
         }
+    }
+
+    /// Tuning knob range (semitones). FX reaches far down, so it can be a low impact or a high ping.
+    var tuneKnobRange: ClosedRange<Float> {
+        self == .fx ? -36...12 : -12...12
     }
 }
 
@@ -107,27 +120,33 @@ nonisolated enum SynthParam: Int, CaseIterable {
     case cowbellLevel, cowbellTune, cowbellDecay, cowbellMute
     case rideLevel, rideTune, rideDecay, rideMute
     case tomLoVariant, tomHiVariant, rimVariant, cowbellVariant, rideVariant
+    // Crash, Shaker, Clave and FX, appended the same way.
+    case crashLevel, crashTune, crashDecay, crashMute
+    case shakerLevel, shakerTune, shakerDecay, shakerMute
+    case claveLevel, claveTune, claveDecay, claveMute
+    case fxLevel, fxTune, fxDecay, fxMute
+    case crashVariant, shakerVariant, claveVariant, fxVariant
 
     enum Unit { case percent, bipolarPercent, octave, cents, hertz, seconds, choice, bpm, steps, division, semitones }
 
     /// Number of parameters. Computed rather than `allCases.count`, which builds an array.
-    static var count: Int { rideVariant.rawValue + 1 }
+    static var count: Int { fxVariant.rawValue + 1 }
 
     /// Raw value of a drum's level parameter; tune, decay and mute follow it. Plain arithmetic,
     /// safe on the audio thread.
     @inline(__always)
     static func drumBaseIndex(_ drum: Int) -> Int {
-        drum < DrumKind.originalCount
-            ? kickLevel.rawValue + drum * 4
-            : tomLoLevel.rawValue + (drum - DrumKind.originalCount) * 4
+        if drum < DrumKind.originalCount { return kickLevel.rawValue + drum * 4 }
+        if drum < DrumKind.secondCount { return tomLoLevel.rawValue + (drum - DrumKind.originalCount) * 4 }
+        return crashLevel.rawValue + (drum - DrumKind.secondCount) * 4
     }
 
     /// Raw value of a drum's sound-variant parameter.
     @inline(__always)
     static func drumVariantIndex(_ drum: Int) -> Int {
-        drum < DrumKind.originalCount
-            ? kickVariant.rawValue + drum
-            : tomLoVariant.rawValue + (drum - DrumKind.originalCount)
+        if drum < DrumKind.originalCount { return kickVariant.rawValue + drum }
+        if drum < DrumKind.secondCount { return tomLoVariant.rawValue + (drum - DrumKind.originalCount) }
+        return crashVariant.rawValue + (drum - DrumKind.secondCount)
     }
 
     /// The four parameters of one drum: level, tune, decay, mute (in that order from `drumBase`).
@@ -154,6 +173,9 @@ nonisolated enum SynthParam: Int, CaseIterable {
         if rawValue >= SynthParam.tomLoLevel.rawValue, rawValue <= SynthParam.rideMute.rawValue {
             return DrumKind(rawValue: DrumKind.originalCount + (rawValue - SynthParam.tomLoLevel.rawValue) / 4)
         }
+        if rawValue >= SynthParam.crashLevel.rawValue, rawValue <= SynthParam.fxMute.rawValue {
+            return DrumKind(rawValue: DrumKind.secondCount + (rawValue - SynthParam.crashLevel.rawValue) / 4)
+        }
         return nil
     }
 
@@ -164,6 +186,9 @@ nonisolated enum SynthParam: Int, CaseIterable {
         }
         if rawValue >= SynthParam.tomLoVariant.rawValue, rawValue <= SynthParam.rideVariant.rawValue {
             return DrumKind(rawValue: DrumKind.originalCount + rawValue - SynthParam.tomLoVariant.rawValue)
+        }
+        if rawValue >= SynthParam.crashVariant.rawValue, rawValue <= SynthParam.fxVariant.rawValue {
+            return DrumKind(rawValue: DrumKind.secondCount + rawValue - SynthParam.crashVariant.rawValue)
         }
         return nil
     }
@@ -181,7 +206,7 @@ nonisolated enum SynthParam: Int, CaseIterable {
     var range: ClosedRange<Float> {
         if let slot = laterDrumSlot {
             switch slot {
-            case 1: return -12...12
+            case 1: return drum?.tuneKnobRange ?? -12...12
             case 2: return drum?.decayKnobRange ?? 0.01...1.5
             case 4: return 0...4
             default: return 0...1

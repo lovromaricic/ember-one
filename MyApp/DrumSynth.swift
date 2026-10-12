@@ -63,6 +63,26 @@ nonisolated enum DrumVariants {
         case (.ride, 3): 0.2...2.0          // Bell
         case (.ride, 4): 0.5...3.0          // Wash
         case (.ride, _): 0.3...2.5          // Classic
+        case (.crash, 1): 0.3...2.5         // Bright
+        case (.crash, 2): 0.4...3.0         // Dark
+        case (.crash, 3): 0.1...0.8         // Short
+        case (.crash, 4): 0.5...3.0         // Wash
+        case (.crash, _): 0.3...3.0         // Classic
+        case (.shaker, 1): 0.04...0.3       // Soft
+        case (.shaker, 2): 0.02...0.12      // Tight
+        case (.shaker, 3): 0.06...0.4       // Long
+        case (.shaker, 4): 0.03...0.2       // Bright
+        case (.shaker, _): 0.03...0.25      // Classic
+        case (.clave, 1): 0.02...0.15       // High
+        case (.clave, 2): 0.03...0.25       // Low
+        case (.clave, 3): 0.02...0.15       // Wood
+        case (.clave, 4): 0.01...0.08       // Short
+        case (.clave, _): 0.02...0.2        // Classic
+        case (.fx, 1): 0.03...1.0           // Laser
+        case (.fx, 2): 0.1...2.0            // Drop
+        case (.fx, 3): 0.02...0.5           // Zap
+        case (.fx, 4): 0.1...2.0            // Rise
+        case (.fx, _): 0.05...2.0           // Classic
         }
     }
 
@@ -119,6 +139,26 @@ nonisolated enum DrumVariants {
         case (.ride, 3): 0.7
         case (.ride, 4): 1.4
         case (.ride, _): 0.9
+        case (.crash, 1): 0.7
+        case (.crash, 2): 1.0
+        case (.crash, 3): 0.35
+        case (.crash, 4): 1.4
+        case (.crash, _): 0.8
+        case (.shaker, 1): 0.09
+        case (.shaker, 2): 0.045
+        case (.shaker, 3): 0.14
+        case (.shaker, 4): 0.06
+        case (.shaker, _): 0.07
+        case (.clave, 1): 0.05
+        case (.clave, 2): 0.08
+        case (.clave, 3): 0.05
+        case (.clave, 4): 0.03
+        case (.clave, _): 0.06
+        case (.fx, 1): 0.18
+        case (.fx, 2): 0.6
+        case (.fx, 3): 0.1
+        case (.fx, 4): 0.4
+        case (.fx, _): 0.25
         }
     }
 }
@@ -181,6 +221,18 @@ nonisolated struct DrumHit {
     var ic2: Float = 0
     var ic1R: Float = 0
     var ic2R: Float = 0
+
+    // Second filter (always band-pass): the crash's resonance.
+    var b1: Float = 0
+    var b2: Float = 0
+    var b3: Float = 0
+    var bk: Float = 1
+    var jc1: Float = 0
+    var jc2: Float = 0
+
+    // FX: octaves the pitch sweeps over (negative = upward), and the waveform drive.
+    var sweepOctaves: Float = 0
+    var drive: Float = 0
 
     var loudness: Float { max(amp, max(tone, burst)) * choke }
 }
@@ -248,8 +300,16 @@ nonisolated final class DrumSynth {
             setupRim(&hit, variant: variant, ratio: ratio)
         case DrumKind.cowbell.rawValue:
             setupCowbell(&hit, variant: variant, ratio: ratio, decay: decay)
-        default:
+        case DrumKind.ride.rawValue:
             setupRide(&hit, variant: variant, ratio: ratio, decay: decay)
+        case DrumKind.crash.rawValue:
+            setupCrash(&hit, variant: variant, ratio: ratio, decay: decay)
+        case DrumKind.shaker.rawValue:
+            setupShaker(&hit, variant: variant, ratio: ratio)
+        case DrumKind.clave.rawValue:
+            setupClave(&hit, variant: variant, ratio: ratio)
+        default:
+            setupFX(&hit, variant: variant, ratio: ratio, decay: decay)
         }
         hits[chosen] = hit
     }
@@ -434,6 +494,87 @@ nonisolated final class DrumSynth {
         hit.gain = recipe.5
     }
 
+    /// Crash: high-passed noise plus a band-pass resonance higher up, a soft attack, a long
+    /// decay and a slower tail. Lower and longer than the open hat.
+    private func setupCrash(_ hit: inout DrumHit, variant: Int, ratio: Float, decay: Float) {
+        // (high-pass Hz, resonance Hz, resonance k, resonance mix, tail ×decay, attack s, gain)
+        let recipe: (Float, Float, Float, Float, Float, Float, Float) = switch variant {
+        case 1: (4500, 8500, 0.5, 0.35, 1.8, 0.003, 0.9)   // Bright
+        case 2: (2200, 5500, 0.6, 0.3, 2.2, 0.006, 1.1)    // Dark
+        case 3: (3000, 7000, 0.5, 0.35, 1.2, 0.003, 1.0)   // Short
+        case 4: (2500, 6500, 0.8, 0.25, 2.5, 0.012, 1.0)   // Wash: slow swell, more noise
+        default: (3000, 7000, 0.5, 0.35, 2.0, 0.005, 1.0)  // Classic
+        }
+        setFilter(&hit, cutoff: recipe.0 * ratio, k: 1.2, mode: 0)
+        setFilter2(&hit, cutoff: recipe.1 * ratio, k: recipe.2)
+        hit.tone2Mix = recipe.3
+        hit.tone = 1                                              // the slow tail
+        hit.toneMul = envelopeMul(seconds: max(decay, 0.05) * recipe.4 / 4.6)
+        hit.pitch = 1                                             // attack: the level rises as this falls
+        hit.pitchMul = envelopeMul(seconds: recipe.5 / 2.3)
+        hit.gain = recipe.6
+    }
+
+    /// Shaker: high-passed noise with a soft attack and a short decay.
+    private func setupShaker(_ hit: inout DrumHit, variant: Int, ratio: Float) {
+        // (high-pass Hz, attack s, k, gain)
+        let recipe: (Float, Float, Float, Float) = switch variant {
+        case 1: (5000, 0.012, 1.2, 1.0)    // Soft
+        case 2: (7500, 0.004, 1.0, 1.0)    // Tight
+        case 3: (5500, 0.015, 1.0, 1.0)    // Long
+        case 4: (9000, 0.006, 0.8, 0.9)    // Bright
+        default: (6000, 0.008, 1.0, 1.0)   // Classic
+        }
+        setFilter(&hit, cutoff: recipe.0 * ratio, k: recipe.2, mode: 0)
+        hit.pitch = 1
+        hit.pitchMul = envelopeMul(seconds: recipe.1 / 2.3)
+        hit.gain = recipe.3
+    }
+
+    /// Clave: a short high sine with a tiny pitch drop at the start.
+    private func setupClave(_ hit: inout DrumHit, variant: Int, ratio: Float) {
+        // (Hz, pitch drop, click, second partial mix, gain)
+        let recipe: (Float, Float, Float, Float, Float) = switch variant {
+        case 1: (3200, 0.08, 0.15, 0, 0.9)     // High
+        case 2: (1800, 0.1, 0.15, 0, 1.0)      // Low
+        case 3: (2000, 0.15, 0.3, 0.35, 1.0)   // Wood: an inharmonic overtone, more click
+        case 4: (2500, 0.05, 0.1, 0, 1.0)      // Short
+        default: (2500, 0.08, 0.15, 0, 1.0)    // Classic
+        }
+        hit.endFrequency = recipe.0 * ratio
+        hit.startFrequency = hit.endFrequency * (1 + recipe.1)
+        hit.frequency2 = hit.endFrequency * 2.7
+        hit.tone2Mix = recipe.3
+        hit.pitch = 1
+        hit.pitchMul = envelopeMul(seconds: 0.003 / 4.6)
+        hit.click = recipe.2
+        hit.clickMul = envelopeMul(seconds: 0.001)
+        hit.gain = recipe.4
+    }
+
+    /// FX: a tone sweeping fast from high to low (or up, for Rise) with a noise burst at the
+    /// start. Tuning moves the start pitch; Decay sets the length, the sweep follows it.
+    private func setupFX(_ hit: inout DrumHit, variant: Int, ratio: Float, decay: Float) {
+        // (start Hz, end Hz, sweep ×decay, drive (0 = sine), noise burst, gain)
+        let recipe: (Float, Float, Float, Float, Float, Float) = switch variant {
+        case 1: (5000, 300, 0.35, 3.0, 0.2, 0.8)    // Laser: bright, quick
+        case 2: (1500, 40, 0.8, 0, 0.3, 1.0)        // Drop: low impact
+        case 3: (8000, 400, 0.3, 2.0, 0.6, 0.8)     // Zap: short and noisy
+        case 4: (200, 3000, 0.9, 1.5, 0, 0.8)       // Rise: upward sweep
+        default: (6000, 100, 0.6, 0, 0.5, 1.0)      // Classic
+        }
+        let start = min(max(recipe.0 * ratio, 30), sampleRate * 0.45)
+        let end = min(max(recipe.1 * ratio, 30), sampleRate * 0.45)
+        hit.endFrequency = end
+        hit.sweepOctaves = log2(start / end)
+        hit.pitch = 1
+        hit.pitchMul = envelopeMul(seconds: max(decay, 0.01) * recipe.2 / 4.6)
+        hit.drive = recipe.3
+        hit.click = recipe.4
+        hit.clickMul = envelopeMul(seconds: 0.003)
+        hit.gain = recipe.5
+    }
+
     private func setFilter(_ hit: inout DrumHit, cutoff: Float, k: Float, mode: UInt8) {
         let fc = min(max(cutoff, 20), sampleRate * 0.45)
         let g = tan(.pi * fc / sampleRate)
@@ -442,6 +583,15 @@ nonisolated final class DrumSynth {
         hit.a1 = 1 / (1 + g * (g + k))
         hit.a2 = g * hit.a1
         hit.a3 = g * hit.a2
+    }
+
+    private func setFilter2(_ hit: inout DrumHit, cutoff: Float, k: Float) {
+        let fc = min(max(cutoff, 20), sampleRate * 0.45)
+        let g = tan(.pi * fc / sampleRate)
+        hit.bk = k
+        hit.b1 = 1 / (1 + g * (g + k))
+        hit.b2 = g * hit.b1
+        hit.b3 = g * hit.b2
     }
 
     /// Fades every ringing hit out over ~10 ms (the drum track was switched off).
@@ -559,6 +709,42 @@ nonisolated final class DrumSynth {
                         hit.click *= hit.clickMul
                         l = Self.softClip(s, 1.5)
                         r = l
+                    case DrumKind.crash.rawValue:
+                        let n = noise()
+                        // Band output peaks at 1/k; scaled back by k so the mix stays even.
+                        let source = filter(&hit, n) * (1 - hit.tone2Mix) + bandPass2(&hit, n) * hit.bk * hit.tone2Mix * 2
+                        let envelope = (0.6 * hit.amp + 0.4 * hit.tone) * (1 - hit.pitch)
+                        hit.tone *= hit.toneMul
+                        hit.pitch *= hit.pitchMul
+                        l = Self.softClip(source * envelope, 1.5)
+                        r = l
+                    case DrumKind.shaker.rawValue:
+                        let s = filter(&hit, noise()) * hit.amp * (1 - hit.pitch)
+                        hit.pitch *= hit.pitchMul
+                        l = Self.softClip(s * 1.6, 1.5)
+                        r = l
+                    case DrumKind.clave.rawValue:
+                        let bend = hit.endFrequency + (hit.startFrequency - hit.endFrequency) * hit.pitch
+                        hit.phase += bend / sr
+                        if hit.phase >= 1 { hit.phase -= 1 }
+                        hit.phase2 += hit.frequency2 / sr
+                        if hit.phase2 >= 1 { hit.phase2 -= 1 }
+                        let tones = (sin(2 * .pi * hit.phase) + hit.tone2Mix * sin(2 * .pi * hit.phase2)) * hit.amp
+                        let s = tones + noise() * hit.click * 0.3
+                        hit.pitch *= hit.pitchMul
+                        hit.click *= hit.clickMul
+                        l = Self.softClip(s, 1.5)
+                        r = l
+                    case DrumKind.fx.rawValue:
+                        hit.phase += hit.endFrequency * exp2(hit.sweepOctaves * hit.pitch) / sr
+                        if hit.phase >= 1 { hit.phase -= 1 }
+                        var wave = sin(2 * .pi * hit.phase)
+                        if hit.drive > 0 { wave = tanh(hit.drive * wave) / tanh(hit.drive) }
+                        let s = wave * hit.amp + noise() * hit.click * 0.5
+                        hit.pitch *= hit.pitchMul
+                        hit.click *= hit.clickMul
+                        l = Self.softClip(s, 1.2)
+                        r = l
                     default:
                         l = 0
                         r = 0
@@ -594,6 +780,10 @@ nonisolated final class DrumSynth {
         case DrumKind.rim.rawValue: 0.6
         case DrumKind.cowbell.rawValue: 0.55
         case DrumKind.ride.rawValue: 0.8
+        case DrumKind.crash.rawValue: 0.7
+        case DrumKind.shaker.rawValue: 0.5
+        case DrumKind.clave.rawValue: 0.5
+        case DrumKind.fx.rawValue: 0.65
         default: 0.8
         }
     }
@@ -645,6 +835,17 @@ nonisolated final class DrumSynth {
         hit.ic1 = 2 * v1 - hit.ic1
         hit.ic2 = 2 * v2 - hit.ic2
         return Self.filterOutput(mode: hit.filterMode, x: x, band: v1, low: v2, k: hit.k)
+    }
+
+    /// The second filter's band-pass output (the crash's resonance).
+    @inline(__always)
+    private func bandPass2(_ hit: inout DrumHit, _ x: Float) -> Float {
+        let v3 = x - hit.jc2
+        let v1 = hit.b1 * hit.jc1 + hit.b2 * v3
+        let v2 = hit.jc2 + hit.b2 * hit.jc1 + hit.b3 * v3
+        hit.jc1 = 2 * v1 - hit.jc1
+        hit.jc2 = 2 * v2 - hit.jc2
+        return v1
     }
 
     /// The same filter on separate state, for the wide clap's right channel.

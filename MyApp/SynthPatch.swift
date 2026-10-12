@@ -93,6 +93,10 @@ nonisolated struct SynthPatch: Codable, Equatable {
         var rim = Voice(level: 0.55, decay: 0.04)
         var cowbell = Voice(level: 0.5, decay: 0.3)
         var ride = Voice(level: 0.4, decay: 0.9)
+        var crash = Voice(level: 0.4, decay: 0.8)
+        var shaker = Voice(level: 0.5, decay: 0.07)
+        var clave = Voice(level: 0.5, decay: 0.06)
+        var fx = Voice(level: 0.5, decay: 0.25)
         var volume: Float = 0.8
         var reverbSend: Float = 0
         var delaySend: Float = 0
@@ -130,6 +134,10 @@ nonisolated struct SynthPatch: Codable, Equatable {
                 case .rim: rim
                 case .cowbell: cowbell
                 case .ride: ride
+                case .crash: crash
+                case .shaker: shaker
+                case .clave: clave
+                case .fx: fx
                 }
             }
             set {
@@ -144,6 +152,10 @@ nonisolated struct SynthPatch: Codable, Equatable {
                 case .rim: rim = newValue
                 case .cowbell: cowbell = newValue
                 case .ride: ride = newValue
+                case .crash: crash = newValue
+                case .shaker: shaker = newValue
+                case .clave: clave = newValue
+                case .fx: fx = newValue
                 }
             }
         }
@@ -454,7 +466,7 @@ nonisolated extension SynthPatch.Sequencer {
 
 nonisolated extension SynthPatch.Drums {
     private enum CodingKeys: String, CodingKey {
-        case kick, snare, clap, closedHat, openHat, tomLo, tomHi, rim, cowbell, ride
+        case kick, snare, clap, closedHat, openHat, tomLo, tomHi, rim, cowbell, ride, crash, shaker, clave, fx
         case volume, reverbSend, delaySend, comp, drive, banks, activeBank, enabled
     }
     /// Kits from before drum banks stored one pattern under "pattern".
@@ -473,6 +485,11 @@ nonisolated extension SynthPatch.Drums {
         rim = c.lenient(.rim, default: d.rim)
         cowbell = c.lenient(.cowbell, default: d.cowbell)
         ride = c.lenient(.ride, default: d.ride)
+        // Missing in kits saved with five or ten lanes: their defaults.
+        crash = c.lenient(.crash, default: d.crash)
+        shaker = c.lenient(.shaker, default: d.shaker)
+        clave = c.lenient(.clave, default: d.clave)
+        fx = c.lenient(.fx, default: d.fx)
         volume = c.lenient(.volume, default: d.volume)
         reverbSend = c.lenient(.reverbSend, default: d.reverbSend)
         delaySend = c.lenient(.delaySend, default: d.delaySend)

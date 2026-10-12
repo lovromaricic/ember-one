@@ -589,6 +589,10 @@ extension SynthParam {
             case .rim: String(localized: "Rim")
             case .cowbell: String(localized: "Cowbell")
             case .ride: String(localized: "Ride")
+            case .crash: String(localized: "Crash")
+            case .shaker: String(localized: "Shaker")
+            case .clave: String(localized: "Clave")
+            case .fx: String(localized: "FX")
             }
             switch self {
             case SynthParam.drumLevel(drum): return String(localized: "\(name) level")

@@ -119,6 +119,18 @@ nonisolated enum PatternRandomizer {
             for step in [0, 4, 8, 12] { hit(.ride, step) }
             pattern[DrumKind.openHat.rawValue] = Array(repeating: false, count: SynthPatch.stepCount)
         }
+        // Crash: on the downbeat, now and then.
+        if chance(0.2) { hit(.crash, 0) }
+        // Shaker: offbeat sixteenths or eighths, sometimes.
+        if chance(0.25) {
+            for step in Bool.random(using: &rng) ? [2, 6, 10, 14] : [1, 3, 5, 7, 9, 11, 13, 15] { hit(.shaker, step) }
+        }
+        // Clave: the 3-2 son clave, rarely.
+        if chance(0.15) {
+            for step in [0, 3, 6, 10, 12] { hit(.clave, step) }
+        }
+        // FX: a single hit near the end of the bar, rarely.
+        if chance(0.1) { hit(.fx, [14, 15].randomElement(using: &rng)!) }
         return pattern
     }
 
@@ -134,6 +146,10 @@ nonisolated enum PatternRandomizer {
         case .tomLo, .tomHi: -4...4
         case .rim, .cowbell: -3...3
         case .ride: -2...3
+        case .crash: -3...3
+        case .shaker: -3...4
+        case .clave: -4...4
+        case .fx: -24...6 // FX's knob reaches -36; this keeps it from turning into a rumble
         }
     }
 

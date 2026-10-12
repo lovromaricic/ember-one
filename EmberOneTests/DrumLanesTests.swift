@@ -2,13 +2,16 @@ import Foundation
 import Testing
 @testable import Ember_One
 
-/// The ten-lane drum kit: kits saved with five lanes still load, the five extra lanes
-/// (Tom Lo, Tom Hi, Rim, Cowbell, Ride) are saved with presets, and banks, Copy, Paste,
-/// Clear, both Randomize buttons and their Undo cover all ten lanes.
+/// The 14-lane drum kit: kits saved with five or ten lanes still load, the later lanes
+/// (Tom Lo, Tom Hi, Rim, Cowbell, Ride, then Crash, Shaker, Clave, FX) are saved with presets,
+/// and banks, Copy, Paste, Clear, both Randomize buttons and their Undo cover all 14 lanes.
 struct DrumLanesTests {
     typealias SeededRandom = DrumRandomizerTests.SeededRandom
 
-    static let newDrums: [DrumKind] = [.tomLo, .tomHi, .rim, .cowbell, .ride]
+    /// Every drum after the original five.
+    static let newDrums: [DrumKind] = [.tomLo, .tomHi, .rim, .cowbell, .ride, .crash, .shaker, .clave, .fx]
+    /// The drums added after Ride.
+    static let latestDrums: [DrumKind] = [.crash, .shaker, .clave, .fx]
 
     /// A kit with non-default sounds and steps on all ten lanes, in two banks.
     static func fullKit() -> DrumKit {
@@ -18,19 +21,23 @@ struct DrumLanesTests {
         kit.rim = .init(level: 0.47, tune: 1, decay: 0.05, muted: false, variant: 3)
         kit.cowbell = .init(level: 0.39, tune: -2, decay: 0.5, muted: false, variant: 4)
         kit.ride = .init(level: 0.33, tune: 3, decay: 1.4, muted: false, variant: 1)
+        kit.crash = .init(level: 0.36, tune: -1, decay: 1.6, muted: false, variant: 2)
+        kit.shaker = .init(level: 0.44, tune: 2, decay: 0.1, muted: true, variant: 3)
+        kit.clave = .init(level: 0.52, tune: -4, decay: 0.05, muted: false, variant: 1)
+        kit.fx = .init(level: 0.61, tune: -30, decay: 1.2, muted: false, variant: 4)
         for (i, drum) in newDrums.enumerated() {
-            kit.banks[0][drum.rawValue][i * 3] = true
+            kit.banks[0][drum.rawValue][i] = true
             kit.banks[5][drum.rawValue][15 - i] = true
         }
         return kit
     }
 
-    /// The kit as an app from before the extra drums saved it: five voices, five rows per bank.
-    static func fiveLaneJSON(_ kit: DrumKit) throws -> Data {
+    /// The kit as an older app saved it: only the first `lanes` voices, `lanes` rows per bank.
+    static func savedJSON(_ kit: DrumKit, lanes: Int) throws -> Data {
         var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(kit)) as? [String: Any])
-        for drum in newDrums { object[String(describing: drum)] = nil }
+        for drum in DrumKind.allCases where drum.rawValue >= lanes { object[String(describing: drum)] = nil }
         let banks = try #require(object["banks"] as? [[[Bool]]])
-        object["banks"] = banks.map { Array($0.prefix(DrumKind.originalCount)) }
+        object["banks"] = banks.map { Array($0.prefix(lanes)) }
         return try JSONSerialization.data(withJSONObject: object)
     }
 
@@ -40,16 +47,33 @@ struct DrumLanesTests {
 
     // MARK: - Loading and saving
 
-    @Test func kitHasTenLanesInOrder() {
-        #expect(DrumKind.allCases == [.kick, .snare, .clap, .closedHat, .openHat, .tomLo, .tomHi, .rim, .cowbell, .ride])
+    @Test func kitHasFourteenLanesInOrder() {
+        #expect(DrumKind.allCases == [.kick, .snare, .clap, .closedHat, .openHat, .tomLo, .tomHi, .rim, .cowbell, .ride,
+                                      .crash, .shaker, .clave, .fx])
+        #expect(DrumKind.count == 14)
         #expect(DrumKit().banks.count == SynthPatch.bankCount)
-        #expect(DrumKit().banks.allSatisfy { $0.count == 10 && $0.allSatisfy { $0.count == SynthPatch.stepCount } })
+        #expect(DrumKit().banks.allSatisfy { $0.count == 14 && $0.allSatisfy { $0.count == SynthPatch.stepCount } })
+    }
+
+    @Test func tenLaneKitLoadsWithEmptyNewLanes() throws {
+        let old = Self.fullKit()
+        let kit = try JSONDecoder().decode(DrumKit.self, from: Self.savedJSON(old, lanes: 10)).sanitized()
+        #expect(kit.banks.allSatisfy { $0.count == DrumKind.count })
+        // The ten lanes and their sounds come back exactly.
+        let tenDrums = Array(DrumKind.allCases.prefix(10))
+        #expect(Self.rows(kit, tenDrums) == Self.rows(old, tenDrums))
+        for drum in tenDrums { #expect(kit[drum] == old[drum]) }
+        // Crash, Shaker, Clave and FX are empty, with their default sounds.
+        for drum in Self.latestDrums {
+            #expect(kit.banks.allSatisfy { !$0[drum.rawValue].contains(true) })
+            #expect(kit[drum] == DrumKit()[drum])
+        }
     }
 
     @Test func fiveLaneKitLoadsWithEmptyNewLanes() throws {
         var old = DrumRandomizerTests.sampleKit()
         old.banks[7][2][9] = true
-        let data = try Self.fiveLaneJSON(old)
+        let data = try Self.savedJSON(old, lanes: 5)
         // Every load path decodes, then sanitizes.
         let kit = try JSONDecoder().decode(DrumKit.self, from: data).sanitized()
 
@@ -114,6 +138,13 @@ struct DrumLanesTests {
         // Old parameter numbers (stored by MIDI Learn) didn't move.
         #expect(SynthParam.kickLevel.rawValue == SynthParam.drumBaseIndex(0))
         #expect(SynthParam.openHatVariant.rawValue == SynthParam.drumVariantIndex(4))
+        #expect(SynthParam.tomLoLevel.rawValue == SynthParam.drumBaseIndex(5))
+        #expect(SynthParam.rideVariant.rawValue == SynthParam.drumVariantIndex(9))
+        #expect(SynthParam.crashLevel.rawValue == SynthParam.drumBaseIndex(10))
+        #expect(SynthParam.fxVariant.rawValue == SynthParam.drumVariantIndex(13))
+        // FX tunes much lower than the others, so it can be a low impact.
+        #expect(SynthParam.drumTune(.fx).range == -36...12)
+        #expect(SynthParam.drumTune(.crash).range == -12...12)
     }
 
     // MARK: - Banks, Copy, Paste, Clear (the engine's own methods; no audio is started)
@@ -169,6 +200,10 @@ struct DrumLanesTests {
             #expect(Set(steps(.cowbell)).isSubset(of: [0, 2, 6, 8, 10]) && steps(.cowbell).count <= 2)
             #expect(steps(.ride).isEmpty || steps(.ride) == [0, 4, 8, 12])
             if !steps(.ride).isEmpty { #expect(steps(.openHat).isEmpty) } // ride replaces the open hat
+            #expect(steps(.crash).isEmpty || steps(.crash) == [0])
+            #expect(steps(.shaker).isEmpty || steps(.shaker) == [2, 6, 10, 14] || steps(.shaker) == [1, 3, 5, 7, 9, 11, 13, 15])
+            #expect(steps(.clave).isEmpty || steps(.clave) == [0, 3, 6, 10, 12])
+            #expect(steps(.fx).isEmpty || steps(.fx) == [14] || steps(.fx) == [15])
             // Kick on 1 and a backbeat as before.
             #expect(beat[DrumKind.kick.rawValue][0])
             for drum in Self.newDrums where !steps(drum).isEmpty { used.insert(drum) }
