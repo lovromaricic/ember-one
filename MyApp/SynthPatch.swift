@@ -88,6 +88,11 @@ nonisolated struct SynthPatch: Codable, Equatable {
         var clap = Voice(level: 0.6, decay: 0.25)
         var closedHat = Voice(level: 0.5, decay: 0.06)
         var openHat = Voice(level: 0.45, decay: 0.35)
+        var tomLo = Voice(level: 0.7, decay: 0.25)
+        var tomHi = Voice(level: 0.65, decay: 0.18)
+        var rim = Voice(level: 0.55, decay: 0.04)
+        var cowbell = Voice(level: 0.5, decay: 0.3)
+        var ride = Voice(level: 0.4, decay: 0.9)
         var volume: Float = 0.8
         var reverbSend: Float = 0
         var delaySend: Float = 0
@@ -120,6 +125,11 @@ nonisolated struct SynthPatch: Codable, Equatable {
                 case .clap: clap
                 case .closedHat: closedHat
                 case .openHat: openHat
+                case .tomLo: tomLo
+                case .tomHi: tomHi
+                case .rim: rim
+                case .cowbell: cowbell
+                case .ride: ride
                 }
             }
             set {
@@ -129,6 +139,11 @@ nonisolated struct SynthPatch: Codable, Equatable {
                 case .clap: clap = newValue
                 case .closedHat: closedHat = newValue
                 case .openHat: openHat = newValue
+                case .tomLo: tomLo = newValue
+                case .tomHi: tomHi = newValue
+                case .rim: rim = newValue
+                case .cowbell: cowbell = newValue
+                case .ride: ride = newValue
                 }
             }
         }
@@ -439,7 +454,8 @@ nonisolated extension SynthPatch.Sequencer {
 
 nonisolated extension SynthPatch.Drums {
     private enum CodingKeys: String, CodingKey {
-        case kick, snare, clap, closedHat, openHat, volume, reverbSend, delaySend, comp, drive, banks, activeBank, enabled
+        case kick, snare, clap, closedHat, openHat, tomLo, tomHi, rim, cowbell, ride
+        case volume, reverbSend, delaySend, comp, drive, banks, activeBank, enabled
     }
     /// Kits from before drum banks stored one pattern under "pattern".
     private enum LegacyKeys: String, CodingKey { case pattern }
@@ -451,6 +467,12 @@ nonisolated extension SynthPatch.Drums {
         clap = c.lenient(.clap, default: d.clap)
         closedHat = c.lenient(.closedHat, default: d.closedHat)
         openHat = c.lenient(.openHat, default: d.openHat)
+        // Missing in kits saved before the five extra drums: their defaults.
+        tomLo = c.lenient(.tomLo, default: d.tomLo)
+        tomHi = c.lenient(.tomHi, default: d.tomHi)
+        rim = c.lenient(.rim, default: d.rim)
+        cowbell = c.lenient(.cowbell, default: d.cowbell)
+        ride = c.lenient(.ride, default: d.ride)
         volume = c.lenient(.volume, default: d.volume)
         reverbSend = c.lenient(.reverbSend, default: d.reverbSend)
         delaySend = c.lenient(.delaySend, default: d.delaySend)
@@ -502,12 +524,8 @@ nonisolated extension SynthPatch.Drums {
         case .drumComp: return comp
         case .drumDrive: return drive
         case .drumBank: return Float(activeBank)
-        case .kickVariant: return Float(kick.variant)
-        case .snareVariant: return Float(snare.variant)
-        case .clapVariant: return Float(clap.variant)
-        case .closedHatVariant: return Float(closedHat.variant)
-        case .openHatVariant: return Float(openHat.variant)
         default:
+            if let drum = param.variantDrum { return Float(self[drum].variant) }
             guard let drum = param.drum else { return 0 }
             let voice = self[drum]
             switch param {
@@ -529,12 +547,11 @@ nonisolated extension SynthPatch.Drums {
         case .drumComp: comp = v
         case .drumDrive: drive = v
         case .drumBank: activeBank = Int(v)
-        case .kickVariant: kick.variant = Int(v)
-        case .snareVariant: snare.variant = Int(v)
-        case .clapVariant: clap.variant = Int(v)
-        case .closedHatVariant: closedHat.variant = Int(v)
-        case .openHatVariant: openHat.variant = Int(v)
         default:
+            if let drum = param.variantDrum {
+                self[drum].variant = Int(v)
+                return
+            }
             guard let drum = param.drum else { return }
             switch param {
             case SynthParam.drumLevel(drum): self[drum].level = v

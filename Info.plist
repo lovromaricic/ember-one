@@ -3,6 +3,10 @@
 <plist version="1.0">
 <dict>
 	<!-- Merged with the generated Info.plist. Only what build settings can't express. -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_apple-midi._udp</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

@@ -133,7 +133,7 @@ struct MIDISheet: View {
                 header
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        sectionHeader("Devices")
+                        sectionHeader("Connected devices")
                         card { devicesRows }
 
                         sectionHeader("Input")
@@ -241,10 +241,10 @@ struct MIDISheet: View {
                 statusDot(on: false)
                     .padding(.top, 6)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("No controller connected")
+                    Text("No devices connected")
                         .font(.system(size: titleSize, weight: .semibold))
                         .foregroundStyle(Retro.cream)
-                    Text("Plug one in over USB or pair a Bluetooth controller.")
+                    Text("Plug in a USB MIDI device with a Lightning camera adapter, or pair a Bluetooth MIDI device.")
                         .font(.system(size: hintSize))
                         .foregroundStyle(PresetSheetStyle.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -257,7 +257,7 @@ struct MIDISheet: View {
             if device.id != midi.devices.first?.id { hairline }
             HStack(spacing: 12) {
                 statusDot(on: true)
-                Text(device.name)
+                Text(device.label)
                     .font(.system(size: titleSize, weight: .semibold))
                     .foregroundStyle(Retro.cream)
                 Spacer(minLength: 0)
@@ -287,6 +287,19 @@ struct MIDISheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        hairline
+        VStack(alignment: .leading, spacing: 3) {
+            Toggle("Network MIDI", isOn: $midi.settings.networkMIDI)
+                .font(.system(size: titleSize, weight: .medium))
+                .foregroundStyle(Retro.cream)
+            if midi.settings.networkMIDI {
+                Text("Connect from your Mac: Audio MIDI Setup > MIDI Studio > Network.")
+                    .font(.system(size: hintSize))
+                    .foregroundStyle(PresetSheetStyle.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .rowPadding()
     }
 
     private func statusDot(on: Bool) -> some View {
@@ -571,6 +584,11 @@ extension SynthParam {
             case .clap: String(localized: "Clap")
             case .closedHat: String(localized: "Closed hat")
             case .openHat: String(localized: "Open hat")
+            case .tomLo: String(localized: "Tom Lo")
+            case .tomHi: String(localized: "Tom Hi")
+            case .rim: String(localized: "Rim")
+            case .cowbell: String(localized: "Cowbell")
+            case .ride: String(localized: "Ride")
             }
             switch self {
             case SynthParam.drumLevel(drum): return String(localized: "\(name) level")

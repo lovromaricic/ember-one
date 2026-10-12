@@ -14,6 +14,9 @@ struct ContentView: View {
     /// Visible height of the scrolling middle part and of the panels above the tabs,
     /// so the tab panel can fill the rest.
     @State private var scrollHeight: CGFloat = 0
+    /// "Pattern randomized · Undo" at the top of the tab panel.
+    @State private var panelToast = PanelToast()
+    @State private var toastFrame = CGRect.zero
     @State private var upperHeight: CGFloat = 0
     /// Keys held on either on-screen keyboard, so they can all be released when the phone rotates.
     @State private var heldKeys: Set<Int> = []
@@ -217,6 +220,7 @@ struct ContentView: View {
                     }
                 }
                 .environment(\.drawsSectionBox, false)
+                .environment(panelToast)
                 .id(tab)
                 .transition(.opacity)
             }
@@ -226,6 +230,22 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .top)
         .background(Retro.section, in: RoundedRectangle(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).stroke(Retro.sectionEdge, lineWidth: 1) }
+        // Over the tab strip, clear of the controls below; the tabs beside it still work.
+        .overlay(alignment: .top) {
+            UndoBanner(offer: $panelToast.offer, transition: .move(edge: .top).combined(with: .opacity))
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("tabPanel")) } action: { toastFrame = $0 }
+                .padding(.top, 8)
+        }
+        .coordinateSpace(.named("tabPanel"))
+        .contentShape(Rectangle()) // empty parts of the panel count as "elsewhere" too
+        // A tap anywhere else on the panel hides it: not on the toast itself (Undo must still
+        // run), and not the tap that just showed it.
+        .simultaneousGesture(SpatialTapGesture(coordinateSpace: .named("tabPanel")).onEnded { tap in
+            guard !toastFrame.contains(tap.location),
+                  Date.now.timeIntervalSince(panelToast.offer.shownAt) > 0.3 else { return }
+            panelToast.dismiss()
+        })
+        .onChange(of: tab) { _, _ in panelToast.dismiss() }
     }
 
     /// Play / Stop, tempo, key mode and octave: above the keyboard in portrait and landscape.

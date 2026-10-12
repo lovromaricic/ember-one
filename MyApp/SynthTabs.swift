@@ -117,8 +117,8 @@ struct SequencerTab: View {
     @Binding var selectedStep: Int?
 
     @State private var undo = UndoOffer()
-    /// "Pattern randomized · Undo", shown away from the dice.
-    @State private var diceUndo = UndoOffer()
+    /// "Pattern randomized · Undo", shown at the top of the tab panel.
+    @Environment(PanelToast.self) private var panelToast
     /// Turns of the dice icon (one per tap).
     @State private var diceTurns = 0.0
 
@@ -160,9 +160,6 @@ struct SequencerTab: View {
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(Retro.cream.opacity(0.55))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // Below the banks, so the dice stays free for another roll.
-                .overlay(alignment: .trailing) { UndoBanner(offer: $diceUndo) }
-                .zIndex(1)
             keyModeControls
             HStack(spacing: 0) {
                 // The external clock sets the tempo while it is received.
@@ -266,7 +263,9 @@ struct SequencerTab: View {
         let root = PatternRandomizer.root(for: before, category: synth.patch.category)
         synth.replaceSequencerBank(bank, with: PatternRandomizer.melody(root: root, using: &rng))
         withAnimation(.easeInOut(duration: 0.3)) { diceTurns += 1 }
-        diceUndo.offer(Text("Pattern randomized"), seconds: 5) { [synth] in synth.replaceSequencerBank(bank, with: before) }
+        withAnimation(.easeOut(duration: 0.2)) {
+            panelToast.offer.offer(Text("Pattern randomized"), seconds: 5) { [synth] in synth.replaceSequencerBank(bank, with: before) }
+        }
     }
 
     /// Clears a bank at once and offers a short Undo.
@@ -502,6 +501,11 @@ extension DrumKind {
         case .clap: "Clap"
         case .closedHat: "Closed hat"
         case .openHat: "Open hat"
+        case .tomLo: "Tom Lo"
+        case .tomHi: "Tom Hi"
+        case .rim: "Rim"
+        case .cowbell: "Cowbell"
+        case .ride: "Ride"
         }
     }
 
@@ -533,6 +537,26 @@ extension DrumKind {
         case (.openHat, 3): "Washy"
         case (.openHat, 4): "Soft"
         case (.openHat, _): "Long"
+        case (.tomLo, 1), (.tomHi, 1): "Deep"
+        case (.tomLo, 2), (.tomHi, 2): "Tight"
+        case (.tomLo, 3), (.tomHi, 3): "Electro"
+        case (.tomLo, 4), (.tomHi, 4): "Soft"
+        case (.tomLo, _), (.tomHi, _): "Classic"
+        case (.rim, 1): "Wood"
+        case (.rim, 2): "Sharp"
+        case (.rim, 3): "Snap"
+        case (.rim, 4): "Soft"
+        case (.rim, _): "Classic"
+        case (.cowbell, 1): "High"
+        case (.cowbell, 2): "Low"
+        case (.cowbell, 3): "Short"
+        case (.cowbell, 4): "Dry"
+        case (.cowbell, _): "Classic"
+        case (.ride, 1): "Bright"
+        case (.ride, 2): "Dark"
+        case (.ride, 3): "Bell"
+        case (.ride, 4): "Wash"
+        case (.ride, _): "Classic"
         }
     }
 
@@ -544,6 +568,11 @@ extension DrumKind {
         case .clap: "CLAP"
         case .closedHat: "C.HAT"
         case .openHat: "O.HAT"
+        case .tomLo: "TOM LO"
+        case .tomHi: "TOM HI"
+        case .rim: "RIM"
+        case .cowbell: "COWBELL"
+        case .ride: "RIDE"
         }
     }
 }
@@ -559,6 +588,10 @@ struct DrumsTab: View {
     @State private var followsPlayhead = true
     @State private var editing: DrumKind?
     @State private var undo = UndoOffer()
+    /// "Pattern randomized · Undo", shown at the top of the tab panel.
+    @Environment(PanelToast.self) private var panelToast
+    /// Taps of "Randomize drum sounds" (for its haptic and a little bounce).
+    @State private var soundTurns = 0.0
     /// Turns of the dice icon (one per tap).
     @State private var diceTurns = 0.0
     @Environment(\.knobSize) private var knobSize
@@ -623,17 +656,26 @@ struct DrumsTab: View {
         }
     }
 
-    /// Randomize, Copy, Paste and Clear for the selected drum bank. Four equal buttons with the
-    /// bank row's spacing, so each one lines up with two bank buttons below it.
+    /// Randomize pattern, Randomize drum sounds, Copy, Paste and Clear for the selected drum
+    /// bank: five equal buttons across the row.
     private var bankTools: some View {
         let bank = synth.drums.activeBank
         let letter = SequencerTab.bankLetter(bank)
         return HStack(spacing: 4) {
-            ToolButton(symbol: "dice", label: "Randomize", accessibility: Text("Randomize pattern"),
+            ToolButton(symbol: "dice", label: "Randomize pattern", accessibility: Text("Randomize pattern"),
                        tint: Retro.accent, width: nil, rotation: diceTurns * 360) {
                 randomizeBank(bank)
             }
             .sensoryFeedback(.impact(weight: .light), trigger: diceTurns)
+            ToolButton(symbol: "", label: "Randomize drum sounds", accessibility: Text("Randomize drum sounds"),
+                       tint: Retro.accent, width: nil,
+                       icon: AnyView(DrumSparkleIcon()
+                           .stroke(style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+                           .frame(width: 17, height: 15)
+                           .scaleEffect(soundTurns.truncatingRemainder(dividingBy: 2) == 1 ? 1.12 : 1))) {
+                randomizeSounds()
+            }
+            .sensoryFeedback(.impact(weight: .light), trigger: soundTurns)
             ToolButton(symbol: "doc.on.doc", label: "Copy", accessibility: Text("Copy drum bank \(letter)"), width: nil) {
                 synth.drumBankClipboard = synth.drumBankPattern(bank)
             }
@@ -648,13 +690,29 @@ struct DrumsTab: View {
         .padding(.vertical, -7) // drawn 30 pt high; the 44 pt touch areas overlap the gaps
     }
 
+    /// New variant, tuning and decay for every drum; levels, mutes and patterns stay. Takes effect
+    /// on the next hits, so a running pattern never clicks.
+    private func randomizeSounds() {
+        let before = synth.drums
+        var rng = SystemRandomNumberGenerator()
+        synth.drums = PatternRandomizer.drumSounds(for: before, using: &rng)
+        withAnimation(.spring(duration: 0.3)) { soundTurns += 1 }
+        withAnimation(.easeOut(duration: 0.2)) {
+            panelToast.offer.offer(Text("Drum sounds randomized"), seconds: 5) { [synth] in
+                synth.drums = synth.drums.withSounds(from: before) // only the sounds go back
+            }
+        }
+    }
+
     /// New beat for the selected drum bank (swaps in on the next bar while playing).
     private func randomizeBank(_ bank: Int) {
         let before = synth.drumBankPattern(bank)
         var rng = SystemRandomNumberGenerator()
         synth.replaceDrumBank(bank, with: PatternRandomizer.beat(using: &rng))
         withAnimation(.easeInOut(duration: 0.3)) { diceTurns += 1 }
-        undo.offer(Text("Pattern randomized"), seconds: 5) { [synth] in synth.replaceDrumBank(bank, with: before) }
+        withAnimation(.easeOut(duration: 0.2)) {
+            panelToast.offer.offer(Text("Pattern randomized"), seconds: 5) { [synth] in synth.replaceDrumBank(bank, with: before) }
+        }
     }
 
     /// Clears every drum's steps in a bank at once (sounds stay) and offers a short Undo.
@@ -924,6 +982,30 @@ struct TrackSwitch: View {
 // MARK: - Small tools
 
 /// A small icon button with a 44 pt touch area.
+/// A drum with a small four-point sparkle at its top right ("Randomize drum sounds").
+struct DrumSparkleIcon: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        var path = Path()
+        // Drum: top rim (ellipse), sides, bottom curve.
+        let left = rect.minX + w * 0.04, right = rect.minX + w * 0.74
+        let rimY = rect.minY + h * 0.42, bottomY = rect.minY + h * 0.86, rimH = h * 0.26
+        path.addEllipse(in: CGRect(x: left, y: rimY - rimH / 2, width: right - left, height: rimH))
+        path.move(to: CGPoint(x: left, y: rimY))
+        path.addLine(to: CGPoint(x: left, y: bottomY))
+        path.addQuadCurve(to: CGPoint(x: right, y: bottomY), control: CGPoint(x: (left + right) / 2, y: bottomY + rimH))
+        path.addLine(to: CGPoint(x: right, y: rimY))
+        // Sparkle: four points curving in towards the centre.
+        let c = CGPoint(x: rect.minX + w * 0.86, y: rect.minY + h * 0.17), r = w * 0.15
+        path.move(to: CGPoint(x: c.x, y: c.y - r))
+        path.addQuadCurve(to: CGPoint(x: c.x + r, y: c.y), control: c)
+        path.addQuadCurve(to: CGPoint(x: c.x, y: c.y + r), control: c)
+        path.addQuadCurve(to: CGPoint(x: c.x - r, y: c.y), control: c)
+        path.addQuadCurve(to: CGPoint(x: c.x, y: c.y - r), control: c)
+        return path
+    }
+}
+
 struct ToolButton: View {
     let symbol: String
     let label: LocalizedStringKey
@@ -934,13 +1016,21 @@ struct ToolButton: View {
     var width: CGFloat? = 34
     /// Icon rotation in degrees (the dice spins when tapped).
     var rotation: Double = 0
+    /// A drawn icon used instead of the SF Symbol.
+    var icon: AnyView? = nil
     let action: () -> Void
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
+            Group {
+                if let icon {
+                    icon
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: 13, weight: .semibold))
+                }
+            }
                 .foregroundStyle(tint.opacity(isEnabled ? 1 : 0.3))
                 .rotationEffect(.degrees(rotation))
                 .frame(maxWidth: width ?? .infinity)
@@ -956,6 +1046,19 @@ struct ToolButton: View {
     }
 }
 
+/// The panel-wide "Pattern randomized · Undo" toast, shared by the Sequencer and Drums tabs
+/// and shown at the top of the tab panel (see `ContentView.tabPanel`).
+@Observable
+final class PanelToast {
+    var offer = UndoOffer()
+
+    /// Hides it at once (Undo, a tab switch, or a tap elsewhere on the panel).
+    func dismiss() {
+        guard offer.message != nil else { return }
+        withAnimation(.easeOut(duration: 0.2)) { offer.dismiss() }
+    }
+}
+
 /// A destructive action that can be taken back for a few seconds.
 struct UndoOffer {
     var message: Text?
@@ -963,11 +1066,14 @@ struct UndoOffer {
     var id = 0
     /// How long the banner stays.
     var seconds: Double = 4
+    /// When it was offered (so the tap that showed it doesn't also dismiss it).
+    var shownAt = Date.distantPast
 
     mutating func offer(_ message: Text, seconds: Double = 4, restore: @escaping () -> Void) {
         self.message = message
         self.restore = restore
         self.seconds = seconds
+        shownAt = .now
         id += 1
     }
 
@@ -980,6 +1086,7 @@ struct UndoOffer {
 /// "Bank A cleared · Undo" banner that disappears after a few seconds.
 struct UndoBanner: View {
     @Binding var offer: UndoOffer
+    var transition: AnyTransition = .opacity
 
     var body: some View {
         if let message = offer.message {
@@ -1007,7 +1114,7 @@ struct UndoBanner: View {
             .padding(.trailing, 4)
             .background(Retro.panel, in: RoundedRectangle(cornerRadius: Retro.buttonRadius + 2))
             .overlay { RoundedRectangle(cornerRadius: Retro.buttonRadius + 2).stroke(Retro.accent.opacity(0.7), lineWidth: Retro.buttonBorder) }
-            .transition(.opacity)
+            .transition(transition)
             .task(id: offer.id) {
                 try? await Task.sleep(for: .seconds(offer.seconds))
                 if !Task.isCancelled { withAnimation { offer.dismiss() } }

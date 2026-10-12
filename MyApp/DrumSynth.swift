@@ -38,6 +38,31 @@ nonisolated enum DrumVariants {
         case (.openHat, 3): 0.3...1.5       // Washy
         case (.openHat, 4): 0.1...0.6       // Soft
         case (.openHat, _): 0.15...0.8      // Long
+        case (.tomLo, 1): 0.15...1.2        // Deep
+        case (.tomLo, 2): 0.05...0.3        // Tight
+        case (.tomLo, 3): 0.1...0.8         // Electro
+        case (.tomLo, 4): 0.1...0.7         // Soft
+        case (.tomLo, _): 0.08...0.6        // Classic
+        case (.tomHi, 1): 0.1...0.9         // Deep
+        case (.tomHi, 2): 0.04...0.25       // Tight
+        case (.tomHi, 3): 0.08...0.6        // Electro
+        case (.tomHi, 4): 0.08...0.5        // Soft
+        case (.tomHi, _): 0.06...0.45       // Classic
+        case (.rim, 1): 0.02...0.15         // Wood
+        case (.rim, 2): 0.01...0.08         // Sharp
+        case (.rim, 3): 0.02...0.12         // Snap
+        case (.rim, 4): 0.02...0.3          // Soft
+        case (.rim, _): 0.015...0.12        // Classic
+        case (.cowbell, 1): 0.1...0.8       // High
+        case (.cowbell, 2): 0.1...1.0       // Low
+        case (.cowbell, 3): 0.05...0.25     // Short
+        case (.cowbell, 4): 0.1...0.8       // Dry
+        case (.cowbell, _): 0.1...0.8       // Classic
+        case (.ride, 1): 0.3...2.5          // Bright
+        case (.ride, 2): 0.3...3.0          // Dark
+        case (.ride, 3): 0.2...2.0          // Bell
+        case (.ride, 4): 0.5...3.0          // Wash
+        case (.ride, _): 0.3...2.5          // Classic
         }
     }
 
@@ -69,6 +94,31 @@ nonisolated enum DrumVariants {
         case (.openHat, 3): 0.7
         case (.openHat, 4): 0.25
         case (.openHat, _): 0.3
+        case (.tomLo, 1): 0.45
+        case (.tomLo, 2): 0.12
+        case (.tomLo, 3): 0.3
+        case (.tomLo, 4): 0.25
+        case (.tomLo, _): 0.25
+        case (.tomHi, 1): 0.3
+        case (.tomHi, 2): 0.09
+        case (.tomHi, 3): 0.22
+        case (.tomHi, 4): 0.18
+        case (.tomHi, _): 0.18
+        case (.rim, 1): 0.05
+        case (.rim, 2): 0.025
+        case (.rim, 3): 0.04
+        case (.rim, 4): 0.07
+        case (.rim, _): 0.04
+        case (.cowbell, 1): 0.28
+        case (.cowbell, 2): 0.35
+        case (.cowbell, 3): 0.12
+        case (.cowbell, 4): 0.3
+        case (.cowbell, _): 0.3
+        case (.ride, 1): 0.8
+        case (.ride, 2): 1.1
+        case (.ride, 3): 0.7
+        case (.ride, 4): 1.4
+        case (.ride, _): 0.9
         }
     }
 }
@@ -190,8 +240,16 @@ nonisolated final class DrumSynth {
             setupClap(&hit, variant: variant, ratio: ratio)
         case DrumKind.closedHat.rawValue:
             setupClosedHat(&hit, variant: variant, ratio: ratio)
-        default:
+        case DrumKind.openHat.rawValue:
             setupOpenHat(&hit, variant: variant, ratio: ratio)
+        case DrumKind.tomLo.rawValue, DrumKind.tomHi.rawValue:
+            setupTom(&hit, high: drum == DrumKind.tomHi.rawValue, variant: variant, ratio: ratio)
+        case DrumKind.rim.rawValue:
+            setupRim(&hit, variant: variant, ratio: ratio)
+        case DrumKind.cowbell.rawValue:
+            setupCowbell(&hit, variant: variant, ratio: ratio, decay: decay)
+        default:
+            setupRide(&hit, variant: variant, ratio: ratio, decay: decay)
         }
         hits[chosen] = hit
     }
@@ -296,6 +354,86 @@ nonisolated final class DrumSynth {
         hit.gain = recipe.4
     }
 
+    /// Toms: a sine that sweeps down from ~2.5× its pitch to the base pitch, and a noise click.
+    private func setupTom(_ hit: inout DrumHit, high: Bool, variant: Int, ratio: Float) {
+        // (start multiple, sweep time s, click, gain)
+        let recipe: (Float, Float, Float, Float) = switch variant {
+        case 1: (2.0, 0.07, 0.15, 1.0)    // Deep: slower, rounder sweep
+        case 2: (1.8, 0.025, 0.35, 1.0)   // Tight: short, little sweep
+        case 3: (4.0, 0.06, 0.2, 0.9)     // Electro: big "pew" sweep
+        case 4: (1.5, 0.04, 0.0, 1.0)     // Soft: barely any sweep, no click
+        default: (2.5, 0.04, 0.3, 1.0)    // Classic
+        }
+        let base: Float = (high ? 150 : 90) * ratio
+        hit.startFrequency = base * recipe.0
+        hit.endFrequency = base
+        hit.pitch = 1
+        hit.pitchMul = envelopeMul(seconds: recipe.1 / 4.6)
+        hit.click = recipe.2
+        hit.clickMul = envelopeMul(seconds: 0.0015)
+        hit.gain = recipe.3
+        hit.softClip = 1.2
+    }
+
+    /// Rimshot: two short detuned tones (sine and triangle) and a burst of high-passed noise.
+    private func setupRim(_ hit: inout DrumHit, variant: Int, ratio: Float) {
+        // (tone 1 Hz, tone 2 Hz, noise burst, high-pass Hz, gain)
+        let recipe: (Float, Float, Float, Float, Float) = switch variant {
+        case 1: (1200, 380, 0.3, 3000, 1.0)     // Wood: lower, rounder
+        case 2: (2200, 620, 0.5, 6000, 0.9)     // Sharp: higher, shorter
+        case 3: (1700, 480, 0.9, 4000, 0.9)     // Snap: more noise
+        case 4: (1500, 430, 0.2, 3000, 0.8)     // Soft
+        default: (1700, 480, 0.5, 4000, 1.0)    // Classic
+        }
+        hit.startFrequency = recipe.0 * ratio
+        hit.frequency2 = recipe.1 * ratio
+        hit.click = recipe.2
+        hit.clickMul = envelopeMul(seconds: 0.004)
+        setFilter(&hit, cutoff: recipe.3 * ratio, k: 1.2, mode: 0)
+        hit.gain = recipe.4
+    }
+
+    /// Cowbell: two square waves through a band-pass; a fast first drop, then the ring.
+    private func setupCowbell(_ hit: inout DrumHit, variant: Int, ratio: Float, decay: Float) {
+        // (square 1 Hz, square 2 Hz, band-pass Hz, k, gain)
+        let recipe: (Float, Float, Float, Float, Float) = switch variant {
+        case 1: (720, 1070, 2000, 0.9, 0.9)     // High
+        case 2: (400, 600, 1100, 0.9, 1.1)      // Low
+        case 3: (540, 800, 1500, 0.9, 1.0)      // Short
+        case 4: (540, 800, 1500, 1.8, 1.1)      // Dry: wider band
+        default: (540, 800, 1500, 0.9, 1.0)     // Classic
+        }
+        hit.startFrequency = recipe.0 * ratio
+        hit.frequency2 = recipe.1 * ratio
+        setFilter(&hit, cutoff: recipe.2 * ratio, k: recipe.3, mode: 1)
+        hit.tone = 1                                              // the fast first drop
+        hit.toneMul = envelopeMul(seconds: max(decay, 0.02) * 0.12 / 4.6)
+        hit.gain = recipe.4
+    }
+
+    /// Ride: the hats' six-square metal cluster plus high-passed noise, a short bright ping,
+    /// and a slow tail that rings longer and softer than the open hat.
+    private func setupRide(_ hit: inout DrumHit, variant: Int, ratio: Float, decay: Float) {
+        // (high-pass Hz, ping Hz, ping level, metal ratio, noise level, gain)
+        let recipe: (Float, Float, Float, Float, Float, Float) = switch variant {
+        case 1: (8000, 6000, 0.6, 1.5, 0.35, 0.9)     // Bright
+        case 2: (4500, 4000, 0.25, 1.1, 0.25, 1.1)    // Dark
+        case 3: (6000, 2600, 0.9, 1.3, 0.2, 0.9)      // Bell: strong ping
+        case 4: (6000, 5000, 0.2, 1.3, 0.55, 1.0)     // Wash: more noise
+        default: (7000, 5000, 0.45, 1.3, 0.3, 1.0)    // Classic
+        }
+        setFilter(&hit, cutoff: recipe.0 * ratio, k: 1.2, mode: 0)
+        hit.startFrequency = recipe.1 * ratio
+        hit.click = recipe.2
+        hit.clickMul = envelopeMul(seconds: 0.03 / 4.6)
+        hit.metal = true
+        hit.metalRatio = recipe.3 * ratio
+        hit.noiseLevel = recipe.4
+        hit.tone = 1                                              // the slow tail
+        hit.toneMul = envelopeMul(seconds: max(decay, 0.05) * 2.5 / 4.6)
+        hit.gain = recipe.5
+    }
+
     private func setFilter(_ hit: inout DrumHit, cutoff: Float, k: Float, mode: UInt8) {
         let fc = min(max(cutoff, 20), sampleRate * 0.45)
         let g = tan(.pi * fc / sampleRate)
@@ -372,14 +510,60 @@ nonisolated final class DrumSynth {
                         l = filter(&hit, noise()) * envelope
                         r = hit.wide ? filterRight(&hit, noiseRight()) * envelope : l
                         hit.burst *= hit.burstMul
-                    default: // hats
+                    case DrumKind.closedHat.rawValue, DrumKind.openHat.rawValue:
                         let source = hit.metal ? metallic(&hit) * 0.6 + noise() * 0.25 : noise()
                         let s = filter(&hit, source) * hit.amp * hit.choke
                         hit.choke *= hit.chokeMul
                         l = s
                         r = s
+                    case DrumKind.tomLo.rawValue, DrumKind.tomHi.rawValue:
+                        let frequency = hit.endFrequency + (hit.startFrequency - hit.endFrequency) * hit.pitch
+                        hit.phase += frequency / sr
+                        if hit.phase >= 1 { hit.phase -= 1 }
+                        let s = sin(2 * .pi * hit.phase) * hit.amp + noise() * hit.click * 0.4
+                        hit.pitch *= hit.pitchMul
+                        hit.click *= hit.clickMul
+                        l = Self.softClip(s, hit.softClip)
+                        r = l
+                    case DrumKind.rim.rawValue:
+                        hit.phase += hit.startFrequency / sr
+                        if hit.phase >= 1 { hit.phase -= 1 }
+                        hit.phase2 += hit.frequency2 / sr
+                        if hit.phase2 >= 1 { hit.phase2 -= 1 }
+                        let triangle = 4 * abs(hit.phase2 - 0.5) - 1
+                        let tones = (sin(2 * .pi * hit.phase) * 0.55 + triangle * 0.45) * hit.amp
+                        let s = tones + filter(&hit, noise()) * hit.click
+                        hit.click *= hit.clickMul
+                        l = Self.softClip(s, 1.5)
+                        r = l
+                    case DrumKind.cowbell.rawValue:
+                        hit.phase += hit.startFrequency / sr
+                        if hit.phase >= 1 { hit.phase -= 1 }
+                        hit.phase2 += hit.frequency2 / sr
+                        if hit.phase2 >= 1 { hit.phase2 -= 1 }
+                        let squares = ((hit.phase < 0.5 ? 1 : -1) + (hit.phase2 < 0.5 ? 1 : -1)) * Float(0.5)
+                        let envelope = 0.55 * hit.amp + 0.45 * hit.tone * hit.amp
+                        let s = filter(&hit, squares) * envelope * 2
+                        hit.tone *= hit.toneMul
+                        l = Self.softClip(s, 1.5)
+                        r = l
+                    case DrumKind.ride.rawValue:
+                        hit.phase += hit.startFrequency / sr
+                        if hit.phase >= 1 { hit.phase -= 1 }
+                        let source = metallic(&hit) * 0.5 + noise() * hit.noiseLevel
+                        // Body fades with the decay knob; a quieter tail fades 2.5× slower.
+                        let envelope = 0.7 * hit.amp + 0.3 * hit.tone
+                        let ping = sin(2 * .pi * hit.phase) * hit.click
+                        let s = filter(&hit, source) * envelope + ping
+                        hit.tone *= hit.toneMul
+                        hit.click *= hit.clickMul
+                        l = Self.softClip(s, 1.5)
+                        r = l
+                    default:
+                        l = 0
+                        r = 0
                     }
-                    if drum < DrumKind.closedHat.rawValue {
+                    if drum < DrumKind.closedHat.rawValue || drum > DrumKind.openHat.rawValue {
                         // Hats apply their choke above; the others only fade when the track stops.
                         l *= hit.choke
                         r *= hit.choke
@@ -406,8 +590,18 @@ nonisolated final class DrumSynth {
         case DrumKind.kick.rawValue: 0.9
         case DrumKind.snare.rawValue: 0.7
         case DrumKind.clap.rawValue: 1.1
+        case DrumKind.tomLo.rawValue, DrumKind.tomHi.rawValue: 0.7
+        case DrumKind.rim.rawValue: 0.6
+        case DrumKind.cowbell.rawValue: 0.55
+        case DrumKind.ride.rawValue: 0.8
         default: 0.8
         }
+    }
+
+    /// Gentle saturation that keeps a voice below full scale (`drive` 0 = clean).
+    @inline(__always)
+    private static func softClip(_ x: Float, _ drive: Float) -> Float {
+        drive > 0 ? tanh(drive * x) / tanh(drive) : x
     }
 
     /// Six square oscillators at classic metallic ratios (the 808 hat recipe).

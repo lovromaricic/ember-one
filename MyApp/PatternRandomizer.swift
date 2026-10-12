@@ -99,6 +99,77 @@ nonisolated enum PatternRandomizer {
                 pattern[DrumKind.closedHat.rawValue][step] = false
             }
         }
+
+        // The extra percussion stays sparse, so the beat stays a beat.
+        // Toms: a small fill near the end of the bar, about 30% of the time.
+        if chance(0.3) {
+            let fill = [12, 13, 14, 15].shuffled(using: &rng).prefix(Int.random(in: 1...2, using: &rng)).sorted()
+            for (i, step) in fill.enumerated() { hit(i == 0 ? .tomHi : .tomLo, step) }
+        }
+        // Rim: one or two offbeat clicks, sometimes.
+        if chance(0.3) {
+            for step in [3, 7, 10, 11, 15].shuffled(using: &rng).prefix(Int.random(in: 1...2, using: &rng)) { hit(.rim, step) }
+        }
+        // Cowbell: on a couple of eighths, now and then.
+        if chance(0.2) {
+            for step in [0, 2, 6, 8, 10].shuffled(using: &rng).prefix(2) { hit(.cowbell, step) }
+        }
+        // Ride: quarter notes, sometimes, instead of the open hat.
+        if chance(0.25) {
+            for step in [0, 4, 8, 12] { hit(.ride, step) }
+            pattern[DrumKind.openHat.rawValue] = Array(repeating: false, count: SynthPatch.stepCount)
+        }
         return pattern
+    }
+
+    // MARK: - Drum sounds
+
+    /// Tuning (semitones) a random drum sound may get: wide enough to sound different,
+    /// narrow enough that nothing turns into a click or a whistle.
+    static func tuneRange(_ drum: DrumKind) -> ClosedRange<Float> {
+        switch drum {
+        case .kick: -5...3
+        case .snare, .clap: -4...4
+        case .closedHat, .openHat: -3...5
+        case .tomLo, .tomHi: -4...4
+        case .rim, .cowbell: -3...3
+        case .ride: -2...3
+        }
+    }
+
+    /// Decay a random drum sound may get: the middle of the variant's knob range, so it is
+    /// neither a near-silent tick nor an endless tail.
+    static func decayRange(_ drum: DrumKind, _ variant: Int) -> ClosedRange<Float> {
+        let full = DrumVariants.decayRange(drum, variant)
+        let span = full.upperBound - full.lowerBound
+        return (full.lowerBound + 0.2 * span)...(full.lowerBound + 0.7 * span)
+    }
+
+    /// New sounds for every drum: a random variant, tuning (whole semitones) and decay.
+    /// Levels, mutes, patterns, banks and the drum bus stay exactly as they are.
+    static func drumSounds<G: RandomNumberGenerator>(for kit: DrumKit, using rng: inout G) -> DrumKit {
+        var result = kit
+        for drum in DrumKind.allCases {
+            var voice = result[drum]
+            voice.variant = Int.random(in: 0..<DrumVariants.count, using: &rng)
+            voice.tune = Float.random(in: tuneRange(drum), using: &rng).rounded()
+            voice.decay = Float.random(in: decayRange(drum, voice.variant), using: &rng)
+            result[drum] = voice
+        }
+        return result
+    }
+}
+
+extension SynthPatch.Drums {
+    /// This kit with the sound settings (variant, tune, decay) of `other` and everything else
+    /// (levels, mutes, patterns, banks, drum bus) kept: what Undo of "Randomize drum sounds" restores.
+    nonisolated func withSounds(from other: DrumKit) -> DrumKit {
+        var result = self
+        for drum in DrumKind.allCases {
+            result[drum].variant = other[drum].variant
+            result[drum].tune = other[drum].tune
+            result[drum].decay = other[drum].decay
+        }
+        return result
     }
 }

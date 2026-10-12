@@ -37,8 +37,24 @@ nonisolated enum ArpDirection: Int, CaseIterable, Codable {
 /// The five drums of the rhythm machine, in row order.
 nonisolated enum DrumKind: Int, CaseIterable, Codable {
     case kick, snare, clap, closedHat, openHat
+    // Added later; kits and presets saved with five lanes still load (new lanes start empty).
+    case tomLo, tomHi, rim, cowbell, ride
 
-    static var count: Int { 5 }
+    static var count: Int { 10 }
+    /// The original five drums (their parameters sit in the first drum block).
+    static var originalCount: Int { 5 }
+
+    /// Full decay knob range (s) of the later drums, covering all their variants.
+    var decayKnobRange: ClosedRange<Float> {
+        switch self {
+        case .tomLo: 0.05...1.2
+        case .tomHi: 0.04...0.9
+        case .rim: 0.01...0.3
+        case .cowbell: 0.05...1.0
+        case .ride: 0.2...3.0
+        default: 0.01...1.5
+        }
+    }
 }
 
 nonisolated enum LFODestination: Int, CaseIterable, Codable {
@@ -83,40 +99,95 @@ nonisolated enum SynthParam: Int, CaseIterable {
     case seqEnabled, drumsEnabled, seqBank
     // Drum bank (A...H) selected for playing.
     case drumBank
+    // The later drums: level, tune, decay, mute each, then their sound variants. Appended so
+    // the raw values above (used by learned MIDI links) never move.
+    case tomLoLevel, tomLoTune, tomLoDecay, tomLoMute
+    case tomHiLevel, tomHiTune, tomHiDecay, tomHiMute
+    case rimLevel, rimTune, rimDecay, rimMute
+    case cowbellLevel, cowbellTune, cowbellDecay, cowbellMute
+    case rideLevel, rideTune, rideDecay, rideMute
+    case tomLoVariant, tomHiVariant, rimVariant, cowbellVariant, rideVariant
 
     enum Unit { case percent, bipolarPercent, octave, cents, hertz, seconds, choice, bpm, steps, division, semitones }
 
     /// Number of parameters. Computed rather than `allCases.count`, which builds an array.
-    static var count: Int { drumBank.rawValue + 1 }
+    static var count: Int { rideVariant.rawValue + 1 }
+
+    /// Raw value of a drum's level parameter; tune, decay and mute follow it. Plain arithmetic,
+    /// safe on the audio thread.
+    @inline(__always)
+    static func drumBaseIndex(_ drum: Int) -> Int {
+        drum < DrumKind.originalCount
+            ? kickLevel.rawValue + drum * 4
+            : tomLoLevel.rawValue + (drum - DrumKind.originalCount) * 4
+    }
+
+    /// Raw value of a drum's sound-variant parameter.
+    @inline(__always)
+    static func drumVariantIndex(_ drum: Int) -> Int {
+        drum < DrumKind.originalCount
+            ? kickVariant.rawValue + drum
+            : tomLoVariant.rawValue + (drum - DrumKind.originalCount)
+    }
 
     /// The four parameters of one drum: level, tune, decay, mute (in that order from `drumBase`).
-    static func drumBase(_ drum: DrumKind) -> Int { kickLevel.rawValue + drum.rawValue * 4 }
+    static func drumBase(_ drum: DrumKind) -> Int { drumBaseIndex(drum.rawValue) }
     static func drumLevel(_ drum: DrumKind) -> SynthParam { SynthParam(rawValue: drumBase(drum))! }
     static func drumTune(_ drum: DrumKind) -> SynthParam { SynthParam(rawValue: drumBase(drum) + 1)! }
     static func drumDecay(_ drum: DrumKind) -> SynthParam { SynthParam(rawValue: drumBase(drum) + 2)! }
     static func drumMute(_ drum: DrumKind) -> SynthParam { SynthParam(rawValue: drumBase(drum) + 3)! }
-    static func drumVariant(_ drum: DrumKind) -> SynthParam { SynthParam(rawValue: kickVariant.rawValue + drum.rawValue)! }
+    static func drumVariant(_ drum: DrumKind) -> SynthParam { SynthParam(rawValue: drumVariantIndex(drum.rawValue))! }
 
     /// Parameters of the drum machine (stored in `DrumKit`, not in presets).
     var isDrumParam: Bool {
         switch self {
-        case .drumVolume, .drumReverbSend, .drumDelaySend, .drumsEnabled, .drumComp, .drumDrive, .drumBank,
-             .kickVariant, .snareVariant, .clapVariant, .closedHatVariant, .openHatVariant: true
-        default: drum != nil
+        case .drumVolume, .drumReverbSend, .drumDelaySend, .drumsEnabled, .drumComp, .drumDrive, .drumBank: true
+        default: drum != nil || variantDrum != nil
         }
     }
 
-    /// Which drum a drum parameter belongs to, if any.
+    /// Which drum a level, tune, decay or mute parameter belongs to, if any.
     var drum: DrumKind? {
-        guard rawValue >= SynthParam.kickLevel.rawValue, rawValue <= SynthParam.openHatMute.rawValue else { return nil }
-        return DrumKind(rawValue: (rawValue - SynthParam.kickLevel.rawValue) / 4)
+        if rawValue >= SynthParam.kickLevel.rawValue, rawValue <= SynthParam.openHatMute.rawValue {
+            return DrumKind(rawValue: (rawValue - SynthParam.kickLevel.rawValue) / 4)
+        }
+        if rawValue >= SynthParam.tomLoLevel.rawValue, rawValue <= SynthParam.rideMute.rawValue {
+            return DrumKind(rawValue: DrumKind.originalCount + (rawValue - SynthParam.tomLoLevel.rawValue) / 4)
+        }
+        return nil
+    }
+
+    /// Which drum a sound-variant parameter belongs to, if any.
+    var variantDrum: DrumKind? {
+        if rawValue >= SynthParam.kickVariant.rawValue, rawValue <= SynthParam.openHatVariant.rawValue {
+            return DrumKind(rawValue: rawValue - SynthParam.kickVariant.rawValue)
+        }
+        if rawValue >= SynthParam.tomLoVariant.rawValue, rawValue <= SynthParam.rideVariant.rawValue {
+            return DrumKind(rawValue: DrumKind.originalCount + rawValue - SynthParam.tomLoVariant.rawValue)
+        }
+        return nil
+    }
+
+    /// For the later drums: which of level (0), tune (1), decay (2), mute (3) or variant (4).
+    private var laterDrumSlot: Int? {
+        if let drum, drum.rawValue >= DrumKind.originalCount { return rawValue - SynthParam.drumBase(drum) }
+        if let variantDrum, variantDrum.rawValue >= DrumKind.originalCount { return 4 }
+        return nil
     }
 
     /// Pump speeds, as fractions of a whole note, indexed by the `pumpRate` value.
     static let pumpDivisions: [(label: String, perBeat: Float)] = [("1/2", 0.5), ("1/4", 1), ("1/8", 2), ("1/16", 4)]
 
     var range: ClosedRange<Float> {
-        switch self {
+        if let slot = laterDrumSlot {
+            switch slot {
+            case 1: return -12...12
+            case 2: return drum?.decayKnobRange ?? 0.01...1.5
+            case 4: return 0...4
+            default: return 0...1
+            }
+        }
+        return switch self {
         case .osc1Wave, .osc2Wave: 0...3
         case .osc1Octave, .osc2Octave: -2...2
         case .osc1Detune, .osc2Detune: -50...50
@@ -149,7 +220,8 @@ nonisolated enum SynthParam: Int, CaseIterable {
 
     /// Frequencies and times feel natural on a logarithmic knob.
     var isLogarithmic: Bool {
-        switch self {
+        if let slot = laterDrumSlot { return slot == 2 }
+        return switch self {
         case .cutoff, .lfoRate, .ampAttack, .ampDecay, .ampRelease, .filterAttack, .filterDecay, .filterRelease,
              .delayTime, .chorusRate, .kickDecay, .snareDecay, .clapDecay, .closedHatDecay, .openHatDecay: true
         default: false
@@ -157,7 +229,8 @@ nonisolated enum SynthParam: Int, CaseIterable {
     }
 
     var step: Float? {
-        switch self {
+        if let slot = laterDrumSlot { return slot >= 3 ? 1 : nil }
+        return switch self {
         case .osc1Wave, .osc2Wave, .osc1Octave, .osc2Octave, .lfoDestination, .pumpRate, .seqTempo, .seqLength,
              .kickMute, .snareMute, .clapMute, .closedHatMute, .openHatMute,
              .keyMode, .arpDirection, .arpOctaves, .keyHold,
@@ -170,7 +243,8 @@ nonisolated enum SynthParam: Int, CaseIterable {
     /// Levels and tone settings glide to new values on the audio thread, so turning a knob
     /// or switching presets never clicks.
     var isSmoothed: Bool {
-        switch self {
+        if let slot = laterDrumSlot { return slot == 0 }
+        return switch self {
         case .osc1Level, .osc2Level, .osc1Detune, .osc2Detune, .cutoff, .resonance, .filterEnvAmount,
              .ampSustain, .filterSustain, // a held note follows the sustain level, so it must glide
              .lfoAmount, .masterVolume, .delayFeedback, .delayMix, .reverbSize, .reverbMix,
@@ -182,7 +256,15 @@ nonisolated enum SynthParam: Int, CaseIterable {
     }
 
     var unit: Unit {
-        switch self {
+        if let slot = laterDrumSlot {
+            switch slot {
+            case 0: return .percent
+            case 1: return .semitones
+            case 2: return .seconds
+            default: return .choice
+            }
+        }
+        return switch self {
         case .osc1Octave, .osc2Octave: .octave
         case .osc1Detune, .osc2Detune: .cents
         case .cutoff, .lfoRate, .chorusRate: .hertz

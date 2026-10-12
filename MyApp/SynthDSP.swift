@@ -686,7 +686,7 @@ nonisolated final class SynthDSP {
             drumBusRight[i] = 0
         }
         for drum in 0..<DrumKind.count {
-            let level = SynthParam.kickLevel.rawValue + drum * 4
+            let level = SynthParam.drumBaseIndex(drum)
             drumLevelStart[drum] = blockStart[level]
             drumLevelStep[drum] = (smoothed[level] - blockStart[level]) / blockLength
         }
@@ -977,9 +977,9 @@ nonisolated final class SynthDSP {
         monitor.currentDrumStep.store(step, ordering: .relaxed)
         let bankBase = playingDrumBank * DrumKind.count * SynthPatch.stepCount
         for drum in 0..<DrumKind.count where drumSteps[bankBase + drum * SynthPatch.stepCount + step] != 0 {
-            let base = SynthParam.kickLevel.rawValue + drum * 4
+            let base = SynthParam.drumBaseIndex(drum)
             guard params[base + 3] < 0.5 else { continue } // muted
-            drums.trigger(drum, variant: Int(params[SynthParam.kickVariant.rawValue + drum]), tune: params[base + 1], decay: params[base + 2])
+            drums.trigger(drum, variant: Int(params[SynthParam.drumVariantIndex(drum)]), tune: params[base + 1], decay: params[base + 2])
         }
     }
 
@@ -1461,8 +1461,8 @@ nonisolated final class SynthDSP {
                 // One hit of the drum's current sound, even if the drum is muted.
                 let drum = Int(event.index)
                 if drum >= 0, drum < DrumKind.count {
-                    let base = SynthParam.kickLevel.rawValue + drum * 4
-                    drums.trigger(drum, variant: Int(params[SynthParam.kickVariant.rawValue + drum]),
+                    let base = SynthParam.drumBaseIndex(drum)
+                    drums.trigger(drum, variant: Int(params[SynthParam.drumVariantIndex(drum)]),
                                   tune: params[base + 1], decay: params[base + 2])
                 }
             case .drumStep:
