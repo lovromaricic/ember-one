@@ -47,6 +47,13 @@ https://github.com/user-attachments/assets/26dd78c4-aeab-4e5b-84cc-de215ee0c821 
 2. Choose an iPhone or a simulator as the run destination.
 3. Press Run.
 
+## Install on iPhone
+
+1. Download `Ember-One-1.0.ipa` from [Releases](../../releases).
+2. Install it with [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io), which sign it with your Apple ID.
+
+Needs iOS 26 or later. With a free Apple ID, sideloaded apps must be refreshed every 7 days (AltStore can do this automatically).
+
 ## Built with
 
 SwiftUI and AVAudioEngine.
