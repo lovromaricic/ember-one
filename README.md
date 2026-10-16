@@ -6,8 +6,21 @@ An analog-style synthesizer for iPhone with a step sequencer, drum machine, pres
 
 | | | |
 |:---:|:---:|:---:|
-| <img src="docs/screenshots/main.png" width="250" alt="Main screen"> | <img src="docs/screenshots/presets.png" width="250" alt="Presets"> | <img src="docs/screenshots/midi.png" width="250" alt="MIDI"> |
+| <img src="docs/screenshots/main.png" width="295" alt="Main screen"> | <img src="docs/screenshots/presets.png" width="295" alt="Presets"> | <img src="docs/screenshots/midi.png" width="295" alt="MIDI"> |
 | Main screen | Presets | MIDI |
+
+
+
+| | | |
+|:---:|:---:|:---:|
+https://github.com/user-attachments/assets/26dd78c4-aeab-4e5b-84cc-de215ee0c821 | https://github.com/user-attachments/assets/1218a38a-b715-47a7-aef7-c1aad8e0a67a  | https://github.com/user-attachments/assets/6fcc68c4-8ea9-4f74-920b-7102953590aa  |
+| Demo 1 | Demo 2 | Demo 3 |
+
+
+
+
+
+
 
 ## Features
 
