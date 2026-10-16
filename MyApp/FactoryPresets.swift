@@ -803,6 +803,62 @@ nonisolated enum FactoryPresets {
                     hits(&kit, .clap, 14)
                 }
             },
+            // Slow, haunting film-score theme (in the spirit of early-80s Vangelis): brassy detuned saws
+            // with a swelling filter, vibrato and a huge reverb. The lead runs over all 8 banks (Dm, Bbmaj7,
+            // Gm, A, two bars each); play the chords on the keys. Drum banks: A slow pulse, B with a crash
+            // swell, C a big impact, D tom fill, E ending hit.
+            make("Glass City", .cinematic, tag: "Theme · 8-bank film score") { p in
+                p.osc1 = .init(wave: .saw, level: 0.7, octave: 0, detune: -8)
+                p.osc2 = .init(wave: .saw, level: 0.6, octave: 0, detune: 8)
+                p.filter = .init(cutoff: 1400, resonance: 0.2, envAmount: 0.45)
+                p.filterEnvelope = .init(attack: 0.35, decay: 1.2, sustain: 0.5, release: 2.0)
+                p.ampEnvelope = .init(attack: 0.06, decay: 1.0, sustain: 0.8, release: 2.2)
+                p.lfo = .init(destination: .pitch, rate: 5.2, amount: 0.05)
+                p.effects.delayTime = 0.643   // dotted eighth at 70 BPM
+                p.effects.delayFeedback = 0.45
+                p.effects.delayMix = 0.25
+                p.effects.reverbSize = 0.95
+                p.effects.reverbMix = 0.45
+                p.effects.chorusRate = 0.4
+                p.effects.chorusMix = 0.6
+                p.sequencer = sequence(tempo: 70, "D5 . . . . . E5 . F5 . . . E5 . . .")
+                let lead = [
+                    "D5 . . . . . . . A4 . . . . . . .",
+                    "D5 . . . . . F5 . A5 . . . G5 . . .",
+                    "F5 . . . . . . . D5 . . . . . . .",
+                    "D5 . . . . . A#4 . D5 . . . G5 . . .",
+                    "F5 . . . . . . . D5 . . . . . . .",
+                    "C#5 . . . . . E5 . A5 . . . G5 . . .",
+                    "E5 . . . . . . . C#5 . . . . . . .",
+                ]
+                for (i, bank) in lead.enumerated() { p.sequencer.banks[i + 1] = parse(bank) }
+                p.drumKit = drumPattern { kit in
+                    kit.kick = .init(level: 0.9, tune: -3, decay: 1.4, variant: 4)     // Boom
+                    kit.tomLo = .init(level: 0.75, tune: -3, decay: 1.0, variant: 1)   // Deep, timpani-like
+                    kit.tomHi = .init(level: 0.65, tune: -2, decay: 0.8, variant: 1)
+                    kit.crash = .init(level: 0.4, tune: -2, decay: 2.8, variant: 4)    // Wash
+                    kit.fx = .init(level: 0.45, tune: -6, decay: 1.6, variant: 2)      // Drop: a deep impact
+                    kit.volume = 0.8
+                    kit.reverbSend = 0.55
+                    kit.delaySend = 0.1
+                    kit.comp = 0.3
+                    kit.drive = 0
+                    hits(&kit, .kick, 1, 11)
+                    hits(&kit, .tomLo, 13)
+                    hits(&kit, bank: 1, .kick, 1, 11)
+                    hits(&kit, bank: 1, .tomLo, 13)
+                    hits(&kit, bank: 1, .crash, 1)
+                    hits(&kit, bank: 2, .kick, 1, 11)
+                    hits(&kit, bank: 2, .fx, 1)
+                    hits(&kit, bank: 2, .crash, 1)
+                    hits(&kit, bank: 3, .kick, 1)
+                    hits(&kit, bank: 3, .tomLo, 9, 13, 15)
+                    hits(&kit, bank: 3, .tomHi, 11, 14, 16)
+                    hits(&kit, bank: 4, .kick, 1)
+                    hits(&kit, bank: 4, .crash, 1)
+                    hits(&kit, bank: 4, .fx, 1)
+                }
+            },
         ]
     }
 
@@ -820,6 +876,13 @@ nonisolated enum FactoryPresets {
     private static func hits(_ kit: inout DrumKit, _ drum: DrumKind, _ steps: Int...) {
         for step in steps where (1...SynthPatch.stepCount).contains(step) {
             kit.banks[0][drum.rawValue][step - 1] = true
+        }
+    }
+
+    /// Turns on `drum` at the given steps (1...16) in another bank (0 = A ... 7 = H).
+    private static func hits(_ kit: inout DrumKit, bank: Int, _ drum: DrumKind, _ steps: Int...) {
+        for step in steps where (1...SynthPatch.stepCount).contains(step) {
+            kit.banks[bank][drum.rawValue][step - 1] = true
         }
     }
 
